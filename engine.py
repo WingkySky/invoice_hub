@@ -16,11 +16,23 @@ import datetime as dt
 from email.header import decode_header
 from urllib.parse import urljoin
 
+import shutil as _shutil
+
 import requests
 from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
 
 import db
+
+# ----------------------------------------------------------- OCR 兜底配置
+# PyMuPDF 的 get_textpage_ocr 是 Tesseract 的封装。
+# 需要本机装 tesseract.exe 并设置 TESSDATA_PREFIX 指向 tessdata 目录。
+# 没装也能跑（只是扫描件/拍照件 PDF 无法识别）。
+TESSERACT_AVAILABLE = bool(_shutil.which("tesseract"))
+# 默认 OCR 语言：中文简体 + 英文（发票号、金额数字）
+OCR_LANG = os.environ.get("INVOICE_HUB_OCR_LANG", "chi_sim+eng")
+# OCR 渲染 dpi，300 对发票这类小字号文档足够
+OCR_DPI = int(os.environ.get("INVOICE_HUB_OCR_DPI", "300"))
 
 # 网易系邮箱（163/126/188/yeah）要求客户端发送 IMAP ID（RFC 2971）申报身份，
 # 否则 SELECT 时返回 "Unsafe Login. Please contact kefu@188.com for help"。
@@ -136,12 +148,50 @@ def apply_rules(text, rules):
     return out
 
 
+def _ocr_textpage(page):
+    """对单页做 OCR，返回 fitz.TextPage。失败返回 None。"""
+    try:
+        return page.get_textpage_ocr(
+            flags=fitz.TEXTFLAGS_TEXT,
+            language=OCR_LANG,
+            dpi=OCR_DPI,
+        )
+    except Exception as e:
+        log(f"[OCR] 页面 OCR 失败: {e}")
+        return None
+
+
 def extract_text_from_pdf(pdf_path):
+    """提取 PDF 全文。若 PDF 无文本层（扫描件/拍照件），自动 fallback 到 OCR。
+    Tesseract 不可用时直接返回空字符串，由后续 note 字段记录"未识别"原因。"""
     try:
         doc = fitz.open(pdf_path)
-        return "".join(p.get_text() for p in doc)
-    except Exception as e:
+    except Exception:
         return ""
+    # 第一遍：尝试原生文本层（电子发票走快速路径）
+    parts = []
+    needs_ocr = False
+    for page in doc:
+        text = page.get_text()
+        if text.strip():
+            parts.append(text)
+        else:
+            # 至少一页文本层为空 → 整体改走 OCR
+            needs_ocr = True
+            break
+    if not needs_ocr:
+        return "".join(parts)
+    # 第二遍：OCR 兜底（扫描件）
+    if not TESSERACT_AVAILABLE:
+        log(f"[OCR] {os.path.basename(pdf_path)} 无文本层但 Tesseract 未安装，跳过")
+        return ""
+    log(f"[OCR] {os.path.basename(pdf_path)} 无文本层，启动 OCR（lang={OCR_LANG}, dpi={OCR_DPI}）")
+    parts = []
+    for page in doc:
+        tp = _ocr_textpage(page)
+        if tp:
+            parts.append(tp.get_text())
+    return "".join(parts)
 
 
 def _is_company_name(s):
@@ -158,6 +208,31 @@ def _is_tax_id(s):
     """判断是否为统一社会信用代码/纳税人识别号：18 位，字母数字混合。"""
     s = (s or "").strip()
     return bool(re.fullmatch(r"[A-Z0-9]{18}", s))
+
+
+def _parse_dict_blocks(d):
+    """从 fitz get_text('dict') 的返回里提取文本块及其 bbox 坐标。"""
+    blocks = []
+    for blk in d.get("blocks", []):
+        if blk.get("type") != 0:
+            continue
+        lines = []
+        for ln in blk.get("lines", []):
+            txt = "".join(s["text"] for s in ln.get("spans", []))
+            if txt.strip():
+                lines.append(txt.strip())
+        if not lines:
+            continue
+        text = "".join(lines)
+        bbox = blk["bbox"]
+        blocks.append({
+            "x0": bbox[0], "y0": bbox[1],
+            "x1": bbox[2], "y1": bbox[3],
+            "cx": (bbox[0] + bbox[2]) / 2,
+            "cy": (bbox[1] + bbox[3]) / 2,
+            "text": text,
+        })
+    return blocks
 
 
 def extract_fields_by_layout(pdf_path):
@@ -179,27 +254,14 @@ def extract_fields_by_layout(pdf_path):
     page_w = page.rect.width
     mid_x = page_w / 2
     d = page.get_text("dict")
+    blocks = _parse_dict_blocks(d)
 
-    blocks = []
-    for blk in d.get("blocks", []):
-        if blk.get("type") != 0:
-            continue
-        lines = []
-        for ln in blk.get("lines", []):
-            txt = "".join(s["text"] for s in ln.get("spans", []))
-            if txt.strip():
-                lines.append(txt.strip())
-        if not lines:
-            continue
-        text = "".join(lines)
-        bbox = blk["bbox"]
-        blocks.append({
-            "x0": bbox[0], "y0": bbox[1],
-            "x1": bbox[2], "y1": bbox[3],
-            "cx": (bbox[0] + bbox[2]) / 2,
-            "cy": (bbox[1] + bbox[3]) / 2,
-            "text": text,
-        })
+    # 原生 dict 没拿到块（扫描件/拍照件）→ 尝试 OCR 的 TextPage 再取 dict
+    if not blocks and TESSERACT_AVAILABLE:
+        tp = _ocr_textpage(page)
+        if tp:
+            d = page.get_text("dict", tp=tp)
+            blocks = _parse_dict_blocks(d)
 
     if not blocks:
         return result
@@ -451,28 +513,46 @@ def try_download_pdf(url, session, out_path):
         return False
 
 
-def fetch_account(acc, since_date, rules, session):
-    """拉一个邮箱的发票邮件 → 下载 PDF → 解析 → 入库。返回新增发票数。"""
-    from_email_id = None
+def fetch_account(acc, rules, session, since_override=None):
+    """拉一个邮箱的发票邮件 → 下载 PDF → 解析 → 入库。返回新增发票数。
+    - 统一用 IMAP UID 语义（uid search / uid fetch），UID 单调稳定。
+    - fetch_mode='incremental'（默认）：只处理 uid > last_uid 的邮件。
+    - fetch_mode='full'：拉 default_since 范围内全部，email_exists 兜底去重。
+    - 不动邮箱状态（不 STORE \Seen、不删邮件）。"""
+    last_uid = acc.get("last_uid") or 0
+    mode = acc.get("fetch_mode") or "incremental"
+    since_expr = since_override or acc.get("default_since") or "90d"
+    since_imap = parse_since_expr(since_expr)
+
+    # 账号级关键词覆盖（NULL 时用全局 rules）
+    keywords = (
+        json.loads(acc["keywords_override"])
+        if acc.get("keywords_override")
+        else rules.get("invoice_keywords", [])
+    )
+
     M = connect(acc)
-    since = imap_date(since_date)
-    typ, data = M.search(None, "SINCE", since)
+    typ, data = M.uid("search", None, "SINCE", since_imap)
     if typ != "OK":
         M.logout()
         return 0
-    uids = data[0].split()
-    uids = uids[-200:]
+    uids = [int(u) for u in data[0].split()]
 
-    keywords = rules.get("invoice_keywords", [])
+    # 增量模式：水位线过滤
+    if mode == "incremental" and last_uid:
+        uids = [u for u in uids if u > last_uid]
+
+    uids = uids[-200:]  # 保留上限，防水位线丢失后一次拉太多
     acc_dir = os.path.join(db.PDF_DIR, safe_name(acc["email"]))
     os.makedirs(acc_dir, exist_ok=True)
     new_inv = 0
+    new_max_uid = last_uid
 
     for uid in reversed(uids):
-        uid = uid.decode() if isinstance(uid, bytes) else uid
-        if db.email_exists(acc["id"], uid):
+        uid_str = str(uid)
+        if db.email_exists(acc["id"], uid_str):
             continue
-        typ, data = M.fetch(uid, "(RFC822)")
+        typ, data = M.uid("fetch", str(uid), "(RFC822)")
         if typ != "OK":
             continue
         msg = email.message_from_bytes(data[0][1])
@@ -481,24 +561,27 @@ def fetch_account(acc, since_date, rules, session):
         date = decode_mime(msg.get("Date"))
         if not match_invoice(subject, keywords):
             # 非发票邮件也存一条（is_invoice=0）以便审计，但跳过解析
-            db.insert_email({"account_id": acc["id"], "uid": uid, "subject": subject,
-                            "from_addr": sender, "date": date, "body_text": "", "body_html": "", "is_invoice": 0})
+            db.insert_email({"account_id": acc["id"], "uid": uid_str, "subject": subject,
+                            "from_addr": sender, "date": date, "body_text": "",
+                            "body_html": "", "is_invoice": 0})
+            new_max_uid = max(new_max_uid, uid)
             continue
 
         html, text = extract_body(msg)
-        db.insert_email({"account_id": acc["id"], "uid": uid, "subject": subject,
-                        "from_addr": sender, "date": date, "body_text": text, "body_html": html, "is_invoice": 1})
+        db.insert_email({"account_id": acc["id"], "uid": uid_str, "subject": subject,
+                        "from_addr": sender, "date": date, "body_text": text,
+                        "body_html": html, "is_invoice": 1})
 
         # 收集 PDF：附件 + 正文链接
         pdfs = []
         for i, (fname, payload) in enumerate(get_attachments(msg), 1):
-            p = os.path.join(acc_dir, f"{uid}_{i}_{safe_name(fname)}")
+            p = os.path.join(acc_dir, f"{uid_str}_{i}_{safe_name(fname)}")
             with open(p, "wb") as f:
                 f.write(payload)
             pdfs.append((p, "attachment"))
         if not pdfs:
             for j, (url, _label) in enumerate(find_pdf_links(html, text)[:3], 1):
-                p = os.path.join(acc_dir, f"{uid}_link{j}.pdf")
+                p = os.path.join(acc_dir, f"{uid_str}_link{j}.pdf")
                 if try_download_pdf(url, session, p):
                     pdfs.append((p, "link"))
                     break
@@ -507,7 +590,12 @@ def fetch_account(acc, since_date, rules, session):
             inv = parse_pdf_to_invoice(p, acc["id"], email_id=None, source_type=stype)
             if db.insert_invoice(inv):
                 new_inv += 1
+        new_max_uid = max(new_max_uid, uid)
+
     M.logout()
+    # 推进水位线
+    if new_max_uid > last_uid:
+        db.update_last_uid(acc["id"], new_max_uid)
     return new_inv
 
 
@@ -530,7 +618,7 @@ def fetch_all(since_date, acc_id=None):
                 continue
             log(f"\n=== 邮箱: {acc['name']} ({acc['email']}) ===")
             try:
-                n = fetch_account(acc, since_date, rules, session)
+                n = fetch_account(acc, rules, session, since_override=since_date)
                 db.set_account_fetch(acc["id"], dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
                 log(f"  新增发票 {n} 张")
                 total += n
