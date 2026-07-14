@@ -81,5 +81,49 @@ class LastUidTest(unittest.TestCase):
         self.assertEqual(db.get_max_uid_for_account(self.acc_id), 30)
 
 
+class AccountPrefsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = (db.DATA_DIR, db.DB_PATH, db.PDF_DIR)
+        db.DATA_DIR = self.tmp
+        db.DB_PATH = os.path.join(self.tmp, "test.db")
+        db.PDF_DIR = os.path.join(self.tmp, "pdfs")
+        db.init()
+
+    def tearDown(self):
+        db.DATA_DIR, db.DB_PATH, db.PDF_DIR = self._orig
+
+    def test_upsert_account_stores_prefs(self):
+        db.upsert_account({
+            "name": "a", "email": "a@x.com", "password": "p",
+            "imap_host": "h", "imap_port": 993, "use_ssl": 1,
+            "folder": "INBOX", "enabled": 1,
+            "fetch_mode": "full", "default_since": "2026-01-01",
+            "keywords_override": '["发票","行程单"]',
+        })
+        a = db.get_accounts()[0]
+        self.assertEqual(a["fetch_mode"], "full")
+        self.assertEqual(a["default_since"], "2026-01-01")
+        self.assertEqual(a["keywords_override"], '["发票","行程单"]')
+
+    def test_update_account_changes_prefs(self):
+        db.upsert_account({
+            "name": "a", "email": "a@x.com", "password": "p",
+            "imap_host": "h", "imap_port": 993, "use_ssl": 1,
+            "folder": "INBOX", "enabled": 1,
+        })
+        acc_id = db.get_accounts()[0]["id"]
+        db.update_account({
+            "id": acc_id, "name": "a", "email": "a@x.com", "provider": None,
+            "imap_host": "h", "imap_port": 993, "use_ssl": 1, "folder": "INBOX",
+            "fetch_mode": "incremental", "default_since": "30d",
+            "keywords_override": None,
+        })
+        a = db.get_account(acc_id)
+        self.assertEqual(a["fetch_mode"], "incremental")
+        self.assertEqual(a["default_since"], "30d")
+        self.assertIsNone(a["keywords_override"])
+
+
 if __name__ == "__main__":
     unittest.main()

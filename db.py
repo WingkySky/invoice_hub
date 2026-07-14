@@ -130,16 +130,25 @@ def get_account(acc_id):
 
 
 def upsert_account(a):
-    """新增或按 email 更新账号。"""
+    """新增或按 email 更新账号。provider 可选，缺省存 NULL。"""
+    a = dict(a)  # 不污染调用方 dict
+    a.setdefault("provider", None)
+    a.setdefault("fetch_mode", "incremental")
+    a.setdefault("default_since", "90d")
+    a.setdefault("keywords_override", None)
     c = conn()
     try:
         c.execute(
-            """INSERT INTO accounts(name,email,provider,imap_host,imap_port,use_ssl,folder,password,enabled)
-               VALUES(:name,:email,:provider,:imap_host,:imap_port,:use_ssl,:folder,:password,:enabled)
+            """INSERT INTO accounts(name,email,provider,imap_host,imap_port,use_ssl,
+                 folder,password,enabled,fetch_mode,default_since,keywords_override)
+               VALUES(:name,:email,:provider,:imap_host,:imap_port,:use_ssl,
+                 :folder,:password,:enabled,:fetch_mode,:default_since,:keywords_override)
                ON CONFLICT(email) DO UPDATE SET
                  name=excluded.name, provider=excluded.provider, imap_host=excluded.imap_host,
                  imap_port=excluded.imap_port, use_ssl=excluded.use_ssl, folder=excluded.folder,
-                 password=excluded.password, enabled=excluded.enabled""",
+                 password=excluded.password, enabled=excluded.enabled,
+                 fetch_mode=excluded.fetch_mode, default_since=excluded.default_since,
+                 keywords_override=excluded.keywords_override""",
             a,
         )
         c.commit()
@@ -194,7 +203,9 @@ def update_account(a):
         c.execute(
             """UPDATE accounts SET
                  name=:name, email=:email, provider=:provider, imap_host=:imap_host,
-                 imap_port=:imap_port, use_ssl=:use_ssl, folder=:folder
+                 imap_port=:imap_port, use_ssl=:use_ssl, folder=:folder,
+                 fetch_mode=:fetch_mode, default_since=:default_since,
+                 keywords_override=:keywords_override
                WHERE id=:id""",
             a,
         )
