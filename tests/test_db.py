@@ -41,5 +41,45 @@ class SchemaMigrationTest(unittest.TestCase):
         self.assertIn("last_uid", cols)
 
 
+class LastUidTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = (db.DATA_DIR, db.DB_PATH, db.PDF_DIR)
+        db.DATA_DIR = self.tmp
+        db.DB_PATH = os.path.join(self.tmp, "test.db")
+        db.PDF_DIR = os.path.join(self.tmp, "pdfs")
+        db.init()
+        db.upsert_account({"name": "a", "email": "a@x.com", "password": "p",
+                           "provider": None, "imap_host": "h", "imap_port": 993,
+                           "use_ssl": 1, "folder": "INBOX", "enabled": 1})
+        self.acc_id = db.get_accounts()[0]["id"]
+
+    def tearDown(self):
+        db.DATA_DIR, db.DB_PATH, db.PDF_DIR = self._orig
+
+    def test_update_and_read_last_uid(self):
+        self.assertIsNone(db.get_account(self.acc_id)["last_uid"])
+        db.update_last_uid(self.acc_id, 12345)
+        self.assertEqual(db.get_account(self.acc_id)["last_uid"], 12345)
+
+    def test_update_last_uid_none(self):
+        db.update_last_uid(self.acc_id, 100)
+        db.update_last_uid(self.acc_id, None)
+        self.assertIsNone(db.get_account(self.acc_id)["last_uid"])
+
+    def test_get_max_uid_for_account_no_emails(self):
+        self.assertIsNone(db.get_max_uid_for_account(self.acc_id))
+
+    def test_get_max_uid_for_account_with_emails(self):
+        db.insert_email({"account_id": self.acc_id, "uid": "10", "subject": "s",
+                         "from_addr": "f", "date": "d", "body_text": "",
+                         "body_html": "", "is_invoice": 0})
+        db.insert_email({"account_id": self.acc_id, "uid": "30", "subject": "s",
+                         "from_addr": "f", "date": "d", "body_text": "",
+                         "body_html": "", "is_invoice": 1})
+        # emails.uid 是 TEXT，按数字比较需 CAST
+        self.assertEqual(db.get_max_uid_for_account(self.acc_id), 30)
+
+
 if __name__ == "__main__":
     unittest.main()

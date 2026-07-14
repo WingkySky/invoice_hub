@@ -165,6 +165,28 @@ def set_account_fetch(acc_id, ts):
         c.close()
 
 
+def update_last_uid(acc_id, uid):
+    """更新账号水位线。uid 传 None 则置 NULL。"""
+    c = conn()
+    try:
+        c.execute("UPDATE accounts SET last_uid=? WHERE id=?", (uid, acc_id))
+        c.commit()
+    finally:
+        c.close()
+
+
+def get_max_uid_for_account(acc_id):
+    """返回 emails 表中该账号最大的 uid（整数）；无记录返回 None。
+    emails.uid 存为 TEXT，按整数比较需 CAST。"""
+    c = conn()
+    r = c.execute(
+        "SELECT MAX(CAST(uid AS INTEGER)) AS m FROM emails WHERE account_id=?",
+        (acc_id,),
+    ).fetchone()
+    c.close()
+    return r["m"] if r and r["m"] is not None else None
+
+
 def update_account(a):
     """按 id 更新账号配置；password 为空时不覆盖（保留原值）。"""
     c = conn()
