@@ -378,16 +378,52 @@ def get_invoices_by_ids(ids):
 
 
 def delete_invoices(ids):
-    """按 id 列表删除发票。返回删除的数量。"""
+    """按 id 列表删除发票：删 invoices 记录 + 本地磁盘 PDF + 无引用的 emails 记录，
+    并重算涉及账号的水位线 last_uid。返回删除的发票数量。
+    绝不触碰邮箱服务器（不 import imaplib、不连接邮箱）。"""
     ids = [int(x) for x in ids if str(x).isdigit()]
     if not ids:
         return 0
     c = conn()
     ph = ",".join("?" * len(ids))
+    # 1. 取 pdf_path + email_id（删前查询，删后查不到）
+    rows = c.execute(
+        f"SELECT id, pdf_path, email_id FROM invoices WHERE id IN ({ph})", ids
+    ).fetchall()
+    # 2. 删磁盘 PDF 文件
+    for r in rows:
+        if r["pdf_path"]:
+            pdf_abs = os.path.join(HERE, r["pdf_path"])
+            if os.path.isfile(pdf_abs):
+                try:
+                    os.remove(pdf_abs)
+                except OSError:
+                    pass
+    # 3. 删 invoices 记录
     cur = c.execute(f"DELETE FROM invoices WHERE id IN ({ph})", ids)
     n = cur.rowcount
+    # 4. 删"无其他 invoice 引用"的 emails 记录，收集需重算水位线的账号
+    accs_to_check = set()
+    for r in rows:
+        eid = r["email_id"]
+        if eid is None:
+            continue
+        still_ref = c.execute(
+            "SELECT 1 FROM invoices WHERE email_id=?", (eid,)
+        ).fetchone()
+        if not still_ref:
+            er = c.execute(
+                "SELECT account_id FROM emails WHERE id=?", (eid,)
+            ).fetchone()
+            if er:
+                accs_to_check.add(er["account_id"])
+            c.execute("DELETE FROM emails WHERE id=?", (eid,))
     c.commit()
     c.close()
+    # 5. 重算水位线（在 emails 删除后）
+    for acc_id in accs_to_check:
+        new_last = get_max_uid_for_account(acc_id)
+        update_last_uid(acc_id, new_last)
     return n
 
 
