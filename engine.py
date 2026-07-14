@@ -599,7 +599,8 @@ def fetch_account(acc, rules, session, since_override=None):
     return new_inv
 
 
-def fetch_all(since_date, acc_id=None):
+def fetch_all(since_override=None, acc_id=None):
+    """抓取全部启用账号。since_override 为可选临时覆盖（不写回配置）。"""
     global FETCH_RUNNING, FETCH_LAST_TS
     FETCH_RUNNING = True
     FETCH_LOG.clear()
@@ -618,7 +619,7 @@ def fetch_all(since_date, acc_id=None):
                 continue
             log(f"\n=== 邮箱: {acc['name']} ({acc['email']}) ===")
             try:
-                n = fetch_account(acc, rules, session, since_override=since_date)
+                n = fetch_account(acc, rules, session, since_override=since_override)
                 db.set_account_fetch(acc["id"], dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
                 log(f"  新增发票 {n} 张")
                 total += n
@@ -630,7 +631,7 @@ def fetch_all(since_date, acc_id=None):
         FETCH_RUNNING = False
 
 
-def fetch_one(acc_id, since_date):
+def fetch_one(acc_id, since_override=None):
     """抓单个账号（供 Web 单账号按钮调用）。"""
     acc = db.get_account(acc_id)
     if not acc:
@@ -639,7 +640,8 @@ def fetch_one(acc_id, since_date):
     if not acc.get("enabled"):
         log(f"[跳过] 账号 {acc['email']} 已停用")
         return 0
-    return fetch_account(acc, since_date, load_rules(), requests.Session())
+    return fetch_account(acc, load_rules(), requests.Session(),
+                         since_override=since_override)
 
 
 def reparse_all_pdfs():
