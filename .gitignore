@@ -1,0 +1,7 @@
+# 数据库与下载产物（含发票PDF，敏感）
+data/
+__pycache__/
+*.pyc
+
+# 含授权码的账号配置（切勿上传/分享）
+config/accounts.json
