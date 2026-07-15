@@ -518,7 +518,7 @@ def fetch_account(acc, rules, session, since_override=None):
     - 统一用 IMAP UID 语义（uid search / uid fetch），UID 单调稳定。
     - fetch_mode='incremental'（默认）：只处理 uid > last_uid 的邮件。
     - fetch_mode='full'：拉 default_since 范围内全部，email_exists 兜底去重。
-    - 不动邮箱状态（不 STORE \Seen、不删邮件）。"""
+    - 不动邮箱状态（不 STORE \\Seen、不删邮件）。"""
     last_uid = acc.get("last_uid") or 0
     mode = acc.get("fetch_mode") or "incremental"
     since_expr = since_override or acc.get("default_since") or "90d"
