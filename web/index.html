@@ -229,6 +229,13 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           重新解析
         </button>
+        <button class="ghost" onclick="reconcile()" title="把磁盘上已下载但未进发票表的PDF回填进库（可先预览）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.3 2.6L3 8"/><path d="M3 3v5h5"/></svg>
+          对账修复
+        </button>
+        <button class="ghost" onclick="reconcile(true)" title="仅预览会回填哪些PDF，不写库">
+          对账预览
+        </button>
         <span class="pill">已选 <b id="selCnt">0</b> 张</span>
         <span id="expMsg" class="pill"></span>
         <span class="pill" style="margin-left:auto">共 <b id="totalCnt">0</b> 张匹配</span>
@@ -878,6 +885,21 @@ async function reparseAll(){
   }
 }
 function gotoFetchTab(){ document.querySelector('.tab-btn[data-tab="fetch"]').click(); }
+
+async function reconcile(dry){
+  const tip = dry ? '仅预览：列出会回填进库的 PDF，不写库、不动文件？' : '把磁盘上已下载但未进发票表的 PDF 回填进库？\n（删除发票后文件还在、或之前没解析成功的情况都能找回）';
+  if(!confirm(tip)) return;
+  const r = await API('/api/reconcile', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({dry_run: !!dry})});
+  if(r.ok){
+    pendingReparse = true;   // 复用轮询：任务完成后自动刷新台账
+    document.getElementById('expMsg').innerHTML = (dry?'对账预览中…':'对账修复中…') +
+      ' <a href="javascript:gotoFetchTab()" style="margin-left:6px">查看日志</a>';
+    startPoll();
+  } else {
+    alert(r.msg || '启动失败');
+  }
+}
 
 /* ======================================================== 回车查询 */
 document.getElementById('f_keyword').addEventListener('keydown', e=>{ if(e.key==='Enter') resetPageAndLoad(); });

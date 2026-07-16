@@ -10,6 +10,7 @@
 """
 import sqlite3
 import os
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(HERE, "data")
@@ -218,10 +219,20 @@ def update_account(a):
 def delete_account(acc_id):
     c = conn()
     try:
+        r = c.execute("SELECT email FROM accounts WHERE id=?", (acc_id,)).fetchone()
         c.execute("DELETE FROM accounts WHERE id=?", (acc_id,))
         c.commit()
     finally:
         c.close()
+    # 级联删除该账号的本地 PDF 目录（派生物，随账号一起清理）
+    if r:
+        acc_dir = os.path.join(PDF_DIR, _safe_dir(r["email"]))
+        if os.path.isdir(acc_dir):
+            try:
+                import shutil as _sh
+                _sh.rmtree(acc_dir)
+            except OSError:
+                pass
 
 
 # ----------------------------------------------------------- 邮件 / 发票
@@ -231,16 +242,63 @@ def email_exists(account_id, uid):
     c.close()
     return r is not None
 
+def get_email_id(account_id, uid):
+    """返回该 (账号, uid) 邮件行的 id；不存在返回 None。供发票回链 / 抓取幂等判定。"""
+    c = conn()
+    r = c.execute("SELECT id FROM emails WHERE account_id=? AND uid=?", (account_id, uid)).fetchone()
+    c.close()
+    return r["id"] if r else None
+
+def set_email_invoice(eid, is_invoice):
+    """更新邮件的 is_invoice 标志（抓取时发现是/不是发票时校正）。"""
+    c = conn()
+    try:
+        c.execute("UPDATE emails SET is_invoice=? WHERE id=?", (1 if is_invoice else 0, eid))
+        c.commit()
+    finally:
+        c.close()
+
+def needs_refetch(account_id, uid):
+    """抓取时的【幂等 + 自愈】判定：该 uid 是否需要从服务器重新拉取。
+    设计原则：表是真相源，文件是派生物。
+      - 邮件不存在            → 需要（新邮件）
+      - 邮件 is_invoice=0    → 不需要（非发票，已存档，不重复拉）
+      - 邮件 is_invoice=1 且有发票行、且 PDF 文件仍在 → 不需要（已齐全，避免重复下载）
+      - 邮件 is_invoice=1 但发票缺失 / PDF 文件丢失 → 需要（重新拉取以恢复）
+    """
+    c = conn()
+    row = c.execute(
+        """SELECT e.is_invoice AS is_inv, i.id AS inv_id, i.pdf_path AS pdf
+           FROM emails e LEFT JOIN invoices i ON i.email_id=e.id
+           WHERE e.account_id=? AND e.uid=?""",
+        (account_id, uid),
+    ).fetchone()
+    c.close()
+    if row is None:
+        return True
+    if not row["is_inv"]:
+        return False
+    if row["inv_id"] is not None and row["pdf"]:
+        pdf_abs = os.path.join(HERE, row["pdf"])
+        if os.path.isfile(pdf_abs):
+            return False
+    return True
+
+def _safe_dir(name):
+    """与 engine.safe_name 完全一致的目录名清洗，供级联删除账号目录使用。"""
+    return re.sub(r'[\\/:*?"<>|]+', "_", name or "").strip()[:80]
+
 
 def insert_email(e):
     c = conn()
     try:
-        c.execute(
+        cur = c.execute(
             """INSERT OR IGNORE INTO emails(account_id,uid,subject,from_addr,date,body_text,body_html,is_invoice)
                VALUES(:account_id,:uid,:subject,:from_addr,:date,:body_text,:body_html,:is_invoice)""",
             e,
         )
         c.commit()
+        return cur.lastrowid
     finally:
         c.close()
 

@@ -291,6 +291,22 @@ class Handler(BaseHTTPRequestHandler):
             _json(self, {"ok": True, "msg": "已启动重新解析"})
             return
 
+        # 对账修复：把磁盘上"下了却没进表"的孤儿 PDF 回填进库（后台线程）
+        if path == "/api/reconcile":
+            if engine.FETCH_RUNNING:
+                _json(self, {"ok": False, "msg": "有任务在运行，请稍候"})
+                return
+            dry = bool(payload.get("dry_run", False))
+            def _reconcile_job():
+                engine.FETCH_RUNNING = True
+                try:
+                    engine.reconcile(dry_run=dry)
+                finally:
+                    engine.FETCH_RUNNING = False
+            threading.Thread(target=_reconcile_job, daemon=True).start()
+            _json(self, {"ok": True, "msg": "已启动对账修复" + ("（仅预览，不写库）" if dry else "")})
+            return
+
         # 连接测试
         if path.startswith("/api/accounts/") and path.endswith("/test"):
             acc_id = _account_id_from_path(path)

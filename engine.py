@@ -550,7 +550,9 @@ def fetch_account(acc, rules, session, since_override=None):
 
     for uid in reversed(uids):
         uid_str = str(uid)
-        if db.email_exists(acc["id"], uid_str):
+        # 幂等 + 自愈判定：邮件不存在 / 或发票或 PDF 缺失 → 需重新拉取；
+        # 已齐全（非发票邮件 / 发票+文件均在）→ 跳过，绝不重复下载。
+        if not db.needs_refetch(acc["id"], uid_str):
             continue
         typ, data = M.uid("fetch", str(uid), "(RFC822)")
         if typ != "OK":
@@ -559,18 +561,22 @@ def fetch_account(acc, rules, session, since_override=None):
         subject = decode_mime(msg.get("Subject"))
         sender = decode_mime(msg.get("From"))
         date = decode_mime(msg.get("Date"))
-        if not match_invoice(subject, keywords):
-            # 非发票邮件也存一条（is_invoice=0）以便审计，但跳过解析
-            db.insert_email({"account_id": acc["id"], "uid": uid_str, "subject": subject,
-                            "from_addr": sender, "date": date, "body_text": "",
-                            "body_html": "", "is_invoice": 0})
+        html, text = extract_body(msg)
+        is_inv = match_invoice(subject, keywords)
+
+        # 取（或建）邮件行 id，供发票回链。insert 用 OR IGNORE，已存在则复用原 id。
+        eid = db.get_email_id(acc["id"], uid_str)
+        if eid is None:
+            eid = db.insert_email({"account_id": acc["id"], "uid": uid_str, "subject": subject,
+                                    "from_addr": sender, "date": date, "body_text": text,
+                                    "body_html": html, "is_invoice": 1 if is_inv else 0})
+        else:
+            db.set_email_invoice(eid, is_inv)
+
+        if not is_inv:
+            # 非发票邮件：已存档（is_invoice=0），跳过解析
             new_max_uid = max(new_max_uid, uid)
             continue
-
-        html, text = extract_body(msg)
-        db.insert_email({"account_id": acc["id"], "uid": uid_str, "subject": subject,
-                        "from_addr": sender, "date": date, "body_text": text,
-                        "body_html": html, "is_invoice": 1})
 
         # 收集 PDF：附件 + 正文链接
         pdfs = []
@@ -586,8 +592,9 @@ def fetch_account(acc, rules, session, since_override=None):
                     pdfs.append((p, "link"))
                     break
 
+        # email_id 回链，保证"发票→邮件"可追踪，删除/对账时才不会误删
         for p, stype in pdfs:
-            inv = parse_pdf_to_invoice(p, acc["id"], email_id=None, source_type=stype)
+            inv = parse_pdf_to_invoice(p, acc["id"], email_id=eid, source_type=stype)
             if db.insert_invoice(inv):
                 new_inv += 1
         new_max_uid = max(new_max_uid, uid)
@@ -679,3 +686,55 @@ def reparse_all_pdfs():
             log(f"  [{idx+1}/{total}] #{inv['id']} 更新: {', '.join(fields_to_update.keys())}")
     log(f"[重新解析] 完成，更新了 {updated}/{total} 条")
     return total, updated
+
+
+def reconcile(dry_run=False):
+    """对账修复：让【磁盘 PDF】与【发票表】重新对齐。
+    原则：表是真相源，文件是派生物——任何"下了却没进表"的孤儿 PDF 都重新解析入库（而非删除），
+    这样既能找回你想要的发票，又始终满足"文件必有对应表行"。
+    流程：
+      1. 收集发票表已引用的所有 pdf_path；
+      2. 遍历每个账号本地 PDF 目录，凡是"未被任何发票引用"的 PDF → 解析并插入发票表
+         （若文件名以 uid_ 开头，则回链到对应 emails 行）；
+      3. dry_run=True 只报告、不写库、不动文件。
+    返回报告 dict。
+    """
+    report = {"reingested": [], "skipped": 0, "failed": []}
+    c = db.conn()
+    referenced = {r["pdf_path"] for r in c.execute(
+        "SELECT pdf_path FROM invoices WHERE pdf_path IS NOT NULL").fetchall()}
+    c.close()
+
+    for acc in db.get_accounts():
+        acc_dir = os.path.join(db.PDF_DIR, safe_name(acc["email"]))
+        if not os.path.isdir(acc_dir):
+            continue
+        for fname in sorted(os.listdir(acc_dir)):
+            if not fname.lower().endswith(".pdf"):
+                continue
+            rel = os.path.relpath(os.path.join(acc_dir, fname), db.HERE)
+            if rel in referenced:
+                report["skipped"] += 1
+                continue
+            # 尝试从文件名解析 uid，回链到 emails
+            email_id = None
+            m = re.match(r"^(\d+)_", fname)
+            if m:
+                email_id = db.get_email_id(acc["id"], m.group(1))
+            pdf_path = os.path.join(db.HERE, rel)
+            try:
+                inv = parse_pdf_to_invoice(pdf_path, acc["id"],
+                                           email_id=email_id, source_type="reconcile")
+            except Exception as e:
+                log(f"[对账] {fname} 解析失败，跳过: {e}")
+                report["failed"].append(rel)
+                continue
+            if dry_run:
+                report["reingested"].append({"file": rel, "invoice_no": inv.get("invoice_no")})
+                continue
+            if db.insert_invoice(inv):
+                log(f"[对账] 回填 {fname} -> 号={inv.get('invoice_no')} 买方={inv.get('buyer')}")
+                report["reingested"].append({"file": rel, "invoice_no": inv.get("invoice_no")})
+    log(f"[对账] 完成：回填 {len(report['reingested'])} 张，跳过 {report['skipped']} 张，"
+         f"失败 {len(report['failed'])} 张")
+    return report
