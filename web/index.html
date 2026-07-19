@@ -537,7 +537,7 @@ async function load(){
     // 仅当本次仍是最近一次请求时才处理失败，避免旧请求覆盖新结果
     if(seq === _loadSeq){
       if(_cachedRows.length > 0){
-        renderRows(_cachedRows, _cachedTotal, seq);   // 有缓存则回退到缓存，绝不留白
+        renderRows(_cachedRows, _cachedTotal, seq, f);   // 有缓存则回退到缓存，绝不留白（带本次 filters，保证 loadStats 与列表一致）
       } else {
         tb.innerHTML = '<tr><td colspan="11" class="empty" style="color:var(--bad)">加载失败，点击 <a href="javascript:load()">重试</a></td></tr>';
       }
@@ -553,15 +553,21 @@ async function load(){
 
   // 返回空结果但有缓存时，沿用缓存数据，避免列表突然消失
   if(total === 0 && _cachedRows.length > 0){
-    renderRows(_cachedRows, _cachedTotal, seq);
+    renderRows(_cachedRows, _cachedTotal, seq, f);
   } else {
     _cachedRows = rows;
     _cachedTotal = total;
-    renderRows(rows, total, seq);
+    renderRows(rows, total, seq, f);
   }
 }
 
-function renderRows(rows, total, seq){
+// renderRows 接受可选 filters 参数，传给 loadStats。
+// 关键修复：load() 在 loadSelectors 重写下拉框前读了 currentFilters()（用户原选过滤器），
+// 但 loadStats 在 renderRows 末尾被调用时，下拉框可能已被 loadSelectors 清空 value，
+// 导致 loadStats 拿到空过滤器 → 列表用 buyer 过滤、stats 用无过滤，两者不一致。
+// 把 load() 当时读到的 filters 一路传到 loadStats，保证「列表用什么过滤，统计就用什么过滤」。
+// filters 留空时（如 showInvoicesTab 缓存渲染、deleteOne/Selected 直接调 loadStats）回退到 currentFilters()。
+function renderRows(rows, total, seq, filters){
   const tb = document.getElementById('tbody');
   document.getElementById('empty').style.display = rows.length ? 'none':'block';
   totalRows = total;
@@ -602,7 +608,7 @@ function renderRows(rows, total, seq){
   }
   renderPager();
   syncSel();
-  loadStats();
+  loadStats(filters);
 }
 
 document.querySelectorAll('#tbl th[data-k]').forEach(th=>{
@@ -690,9 +696,13 @@ function toggleAll(box){
 // 导致统计区（发票张数/合计金额）归零。请求失败时沿用上次成功快照，绝不留白。
 let _cachedStats = null;   // 上一次成功拿到的统计快照
 let _statsSeq = 0;         // 请求序号：只渲染最后一次请求的结果，丢弃更早的慢请求
-async function loadStats(){
+// filters 参数：由 renderRows 透传过来（load() 当时读到的过滤器）。
+// 不传时回退到 currentFilters()（兼容 deleteOne/Selected 等直接调 loadStats 的场景）。
+// 关键修复：避免 load() 与 loadStats 在 loadSelectors 重写下拉框前后读到不同的过滤器，
+// 导致列表与统计用不同过滤器、统计数字跳变。
+async function loadStats(filters){
   const seq = ++_statsSeq;
-  const f = stripEmpty(currentFilters());
+  const f = filters !== undefined ? stripEmpty(filters) : stripEmpty(currentFilters());
   let s;
   try{
     s = await API('/api/stats?' + new URLSearchParams(f));
@@ -705,6 +715,11 @@ async function loadStats(){
   }
   // 异步竞争：仅渲染最后一次请求的结果，更早的慢请求直接丢弃
   if(seq !== _statsSeq) return;
+  // 空结果但已有缓存时，不覆盖缓存（避免边界场景下统计被清成 0）
+  if(s.count === 0 && _cachedStats && _cachedStats.count > 0){
+    renderStats(_cachedStats);
+    return;
+  }
   _cachedStats = s;
   renderStats(s);
 }
@@ -734,12 +749,28 @@ function formatSince(s){
 async function loadSelectors(){
   const [accs, cities, buyers] = await Promise.all([
     API('/api/accounts'), API('/api/cities'), API('/api/buyers')]);
+  // 重写下拉框前，先记录用户当前选中的过滤器值。
+  // 原因：直接 innerHTML=... 会清空 <select> 的 value（重置为第一个 option），
+  // 导致抓取完成时 load() 拿到旧过滤器、loadStats() 拿到空过滤器，统计与列表不一致。
+  const prevAccount = document.getElementById('f_account').value;
+  const prevCity = document.getElementById('f_city').value;
+  const prevBuyer = document.getElementById('f_buyer').value;
   document.getElementById('f_account').innerHTML =
     '<option value="">全部邮箱</option>' + accs.map(a=>`<option value="${a.id}">${escapeHtml(a.name)} (${escapeHtml(a.email)})</option>`).join('');
   document.getElementById('f_city').innerHTML =
     '<option value="">全部城市</option>' + cities.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
   document.getElementById('f_buyer').innerHTML =
     '<option value="">全部买方</option>' + buyers.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+  // 恢复用户选中的过滤器值（仅当该值仍在新选项列表中存在时；已被删除的选项不恢复，避免悬空 value 触发空结果）
+  if(prevAccount && accs.some(a=>String(a.id)===prevAccount)){
+    document.getElementById('f_account').value = prevAccount;
+  }
+  if(prevCity && cities.includes(prevCity)){
+    document.getElementById('f_city').value = prevCity;
+  }
+  if(prevBuyer && buyers.includes(prevBuyer)){
+    document.getElementById('f_buyer').value = prevBuyer;
+  }
   renderAccounts(accs);
   const st = await API('/api/fetch/status');
   document.getElementById('autoMin').value = Math.round((st.auto_interval||0)/60);
