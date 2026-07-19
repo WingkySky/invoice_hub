@@ -1,0 +1,14 @@
+# 数据库与下载产物（含发票PDF，敏感）
+data/
+__pycache__/
+*.pyc
+
+# 含授权码的账号配置（切勿上传/分享）
+config/accounts.json
+# 腾讯企业邮箱 API 凭证（含邮箱/密钥，切勿上传）
+config/tencent.json
+
+# 系统与工具产物（非项目源码）
+.DS_Store
+.agnes/
+.workbuddy/

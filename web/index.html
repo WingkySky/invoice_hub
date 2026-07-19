@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多邮箱发票中枢</title>
+<style>
+  :root{
+    --bg:#f5f6fa; --panel:#fff; --ink:#1f2330; --muted:#6b7280;
+    --line:#e6e8ef; --accent:#534AB7; --accent-d:#3f379a; --accent-soft:#efeefb;
+    --ok:#1f9d55; --bad:#d23b3b; --warn:#c98a00;
+    --shadow:0 1px 3px rgba(20,20,40,.06), 0 1px 2px rgba(20,20,40,.04);
+    --shadow-lg:0 10px 30px rgba(20,20,40,.12);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;
+       background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  button,input,select{font:inherit}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ---------- 顶栏 + Tab ---------- */
+  header{background:var(--accent);color:#fff;padding:0 22px;
+         display:flex;align-items:center;gap:24px;height:56px;
+         box-shadow:0 2px 8px rgba(83,74,183,.18)}
+  header .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;white-space:nowrap}
+  header .brand svg{width:22px;height:22px}
+  nav.tabs{display:flex;gap:2px;height:100%;align-items:stretch}
+  nav.tabs button{background:transparent;color:rgba(255,255,255,.75);border:none;
+                  padding:0 18px;cursor:pointer;font-weight:500;font-size:14px;
+                  border-bottom:3px solid transparent;transition:color .15s,border-color .15s;
+                  display:flex;align-items:center;gap:7px;min-height:44px}
+  nav.tabs button:hover{color:#fff;background:rgba(255,255,255,.06)}
+  nav.tabs button.active{color:#fff;border-bottom-color:#fff}
+  nav.tabs button svg{width:16px;height:16px}
+  header .who{margin-left:auto;font-size:12px;opacity:.85}
+
+  /* ---------- 布局 ---------- */
+  .wrap{max-width:1280px;margin:18px auto;padding:0 18px}
+  .tab-pane{display:none}
+  .tab-pane.active{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* ---------- 卡片 ---------- */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+         padding:14px 16px;box-shadow:var(--shadow)}
+  .card .k{color:var(--muted);font-size:12px;font-weight:500}
+  .card .v{font-size:22px;font-weight:700;margin-top:4px;color:var(--ink)}
+  .card .v small{font-size:12px;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+  .card.top .v{font-size:13px;font-weight:600;line-height:1.7}
+
+  /* ---------- 面板 ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+          padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+  .panel h2{margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;
+            text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+  .panel h2 svg{width:15px;height:15px;color:var(--accent)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+
+  /* ---------- 表单元素 ---------- */
+  input,select{padding:8px 11px;border:1px solid var(--line);border-radius:7px;
+               background:#fff;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
+  input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  button{padding:8px 14px;border:1px solid var(--accent);border-radius:7px;
+         background:var(--accent);color:#fff;cursor:pointer;font-weight:600;
+         transition:background .15s,border-color .15s,opacity .15s;
+         display:inline-flex;align-items:center;gap:6px;min-height:36px}
+  button:hover{background:var(--accent-d);border-color:var(--accent-d)}
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+  button.ghost:hover{background:var(--accent-soft)}
+  button.danger{background:#fff;color:var(--bad);border:1px solid var(--bad)}
+  button.danger:hover{background:#fdeaea}
+  button.mini{padding:5px 10px;font-size:12px;min-height:28px}
+  button.icon-only{padding:6px;min-width:32px;justify-content:center}
+  button svg{width:14px;height:14px}
+  .grow{flex:1;min-width:120px}
+
+  /* ---------- 表格 ---------- */
+  .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px;max-height:calc(100vh - 360px);min-height:320px}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}
+  th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;white-space:nowrap}
+  th{background:var(--accent-soft);color:#3a3470;position:sticky;top:0;z-index:1;
+     cursor:pointer;user-select:none;font-weight:600}
+  th:hover{background:#e6e4f7}
+  th.no-sort{cursor:default}
+  th.no-sort:hover{background:var(--accent-soft)}
+  tbody tr:hover{background:#faf9ff}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;background:var(--accent-soft);color:#3a3470;
+       border-radius:20px;padding:2px 9px;font-size:12px}
+  .badge{display:inline-block;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600}
+  .badge.on{background:#e6f6ec;color:var(--ok)}
+  .badge.off{background:#fdeaea;color:var(--bad)}
+  .badge.local{background:#eaf1fb;color:var(--accent)}
+  .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:13px}
+
+  /* ---------- 分页器 ---------- */
+  .pager{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px;justify-content:space-between}
+  .pager .left{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .pager .pages{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+  .pager .pages button{min-width:32px;padding:5px 8px;font-size:13px}
+  .pager .pages button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .pager .pages button:not(.active){background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .pager .pages button:not(.active):hover{background:var(--accent-soft);border-color:var(--accent)}
+  .pager select{padding:4px 8px;font-size:12px}
+
+  /* ---------- 账号列表 ---------- */
+  .acc{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .acc:last-child{border-bottom:none}
+  .acc .meta{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+  .acc .nm{font-weight:600;font-size:14px}
+  .acc .em{color:var(--muted);font-size:12px}
+  .acc .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .acc .stat{font-size:11px;color:var(--muted);white-space:nowrap}
+
+  /* ---------- 工具栏 ---------- */
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .pill{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+  .pill b{color:var(--accent)}
+
+  /* ---------- 进度日志 ---------- */
+  #fetchLog{background:#1e1e2a;color:#d6d6e0;font-family:ui-monospace,Menlo,Consolas,monospace;
+            font-size:12px;padding:12px;border-radius:8px;max-height:380px;overflow:auto;
+            white-space:pre-wrap;line-height:1.55}
+
+  /* ---------- 弹窗 ---------- */
+  .mask{position:fixed;inset:0;background:rgba(20,20,40,.45);display:none;
+        align-items:center;justify-content:center;z-index:50;padding:20px}
+  .mask.show{display:flex;animation:fade .15s ease}
+  .modal{background:#fff;border-radius:12px;padding:20px 22px;width:min(580px,100%);
+         max-height:90vh;overflow:auto;box-shadow:var(--shadow-lg)}
+  .modal h3{margin:0 0 14px;font-size:16px;display:flex;align-items:center;gap:8px}
+  .modal h3 svg{width:18px;height:18px;color:var(--accent)}
+  .modal label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px;font-weight:500}
+  .modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .modal .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+  .modal .msg{font-size:12px;color:var(--muted);margin-top:10px;min-height:16px}
+  @media(max-width:640px){.modal .grid2{grid-template-columns:1fr}}
+
+  .chk{width:18px;height:18px;cursor:pointer;accent-color:var(--accent);vertical-align:middle}
+  .checkbox-cell{width:36px;text-align:center}
+
+  /* ---------- 响应式 ---------- */
+  @media(max-width:768px){
+    header{padding:0 12px;gap:8px;flex-wrap:wrap;height:auto;min-height:56px}
+    header .brand{font-size:14px}
+    nav.tabs button{padding:0 10px;font-size:13px}
+    nav.tabs button span.lbl{display:none}
+    .wrap{padding:0 10px}
+    .table-wrap{max-height:calc(100vh - 420px)}
+    th,td{padding:7px 8px;font-size:12px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 7h18M3 12h18M3 17h12"/>
+    </svg>
+    <span>多邮箱发票中枢</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="invoices">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+      <span class="lbl">发票台账</span>
+    </button>
+    <button class="tab-btn" data-tab="accounts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"/><path d="M4 14h16v6H4z"/><circle cx="7.5" cy="7" r="0.5" fill="currentColor"/><circle cx="7.5" cy="17" r="0.5" fill="currentColor"/></svg>
+      <span class="lbl">邮箱账号</span>
+    </button>
+    <button class="tab-btn" data-tab="fetch">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      <span class="lbl">抓取任务</span>
+    </button>
+  </nav>
+  <span class="who" id="who"></span>
+</header>
+
+<div class="wrap">
+
+  <!-- ========== Tab 1: 发票台账 ========== -->
+  <section class="tab-pane active" id="tab-invoices">
+    <div class="cards" id="stats"></div>
+
+    <div class="panel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        筛选 / 搜索
+      </h2>
+      <div class="row">
+        <input class="grow" id="f_keyword" placeholder="关键字（买方/销售方/发票号/城市）">
+        <select id="f_account" class="grow"><option value="">全部邮箱</option></select>
+        <select id="f_city" class="grow"><option value="">全部城市</option></select>
+        <select id="f_buyer" class="grow"><option value="">全部买方</option></select>
+        <input type="date" id="f_from" title="开始日期">
+        <input type="date" id="f_to" title="结束日期">
+        <button onclick="resetPageAndLoad()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          查询
+        </button>
+        <button class="ghost" onclick="resetFilters()">重置</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+        发票记录
+      </h2>
+      <div class="toolbar">
+        <button class="ghost" onclick="document.getElementById('fileIn').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          上传本地PDF
+        </button>
+        <input type="file" id="fileIn" accept="application/pdf" multiple style="display:none" onchange="uploadFiles(this)">
+        <button onclick="exportSelected()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          导出选中
+        </button>
+        <button class="danger ghost" onclick="deleteSelected()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+          删除选中
+        </button>
+        <button class="ghost" onclick="reparseAll()" title="用最新解析规则重新扫描所有PDF，补全缺失字段">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          重新解析
+        </button>
+        <button class="ghost" onclick="reconcile()" title="把磁盘上已下载但未进发票表的PDF回填进库（可先预览）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.3 2.6L3 8"/><path d="M3 3v5h5"/></svg>
+          对账修复
+        </button>
+        <button class="ghost" onclick="reconcile(true)" title="仅预览会回填哪些PDF，不写库">
+          对账预览
+        </button>
+        <span class="pill">已选 <b id="selCnt">0</b> 张</span>
+        <span id="expMsg" class="pill"></span>
+        <span class="pill" style="margin-left:auto">共 <b id="totalCnt">0</b> 张匹配</span>
+      </div>
+      <!-- 后台任务进度条：上传/导出/删除/账号删除时显示，避免大批量操作界面无反馈 -->
+      <div id="jobBar" style="display:none;height:4px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin:4px 0">
+        <div id="jobBarFill" style="height:100%;width:0;background:#3b82f6;transition:width .2s"></div>
+      </div>
+      <div class="table-wrap">
+        <table id="tbl">
+          <thead><tr>
+            <th class="checkbox-cell no-sort"><input type="checkbox" class="chk" id="selAll" onchange="toggleAll(this)" aria-label="全选当前页"></th>
+            <th data-k="idx" class="no-sort">#</th>
+            <th data-k="account_name">邮箱</th>
+            <th data-k="buyer">买方主体</th>
+            <th data-k="invoice_no">发票号码</th>
+            <th data-k="amount">金额</th>
+            <th data-k="invoice_date">开票日期</th>
+            <th data-k="seller">销售方</th>
+            <th data-k="city">城市</th>
+            <th class="no-sort">PDF</th>
+            <th class="no-sort">操作</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="empty" style="display:none">没有匹配的发票记录。先在「邮箱账号」Tab 添加邮箱并抓取，或用「上传本地PDF」。</div>
+
+      <!-- 分页器 -->
+      <div class="pager" id="pager">
+        <div class="left">
+          <span>每页
+            <select id="pageSizeSel" onchange="onPageSizeChange()">
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+            条
+          </span>
+          <span id="pageInfo"></span>
+        </div>
+        <div class="pages" id="pages"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== Tab 2: 邮箱账号 ========== -->
+  <section class="tab-pane" id="tab-accounts">
+    <div class="panel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+        已管理的邮箱账号
+      </h2>
+      <div class="toolbar">
+        <button onclick="openAdd()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          添加邮箱账号
+        </button>
+        <span class="pill" style="margin-left:auto">共 <b id="accCnt">0</b> 个账号</span>
+      </div>
+      <div id="acc_list"></div>
+    </div>
+  </section>
+
+  <!-- ========== Tab 3: 抓取任务 ========== -->
+  <section class="tab-pane" id="tab-fetch">
+    <div class="panel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        抓取控制
+      </h2>
+      <div class="toolbar">
+        <button onclick="fetchAll()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          立即抓取全部
+        </button>
+        <input id="fetchSinceInput" placeholder="可选 since，如 30d 或 2026-07-01（留空=各账号偏好）"
+               style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;width:300px;margin-left:8px">
+        <span class="pill">自动抓取：每
+          <input type="number" id="autoMin" style="width:64px;padding:4px 8px" min="0" value="0"> 分钟
+          <button class="ghost mini" onclick="setAuto()">设定</button>
+          <span id="autoState" class="pill"></span>
+        </span>
+        <span class="pill" id="fetchStatePill" style="margin-left:auto"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+        抓取进度日志
+      </h2>
+      <div id="fetchLog">（尚未启动抓取。点上方「立即抓取全部」或在「邮箱账号」Tab 点单账号「抓取」。）</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ========== 账号编辑/添加弹窗 ========== -->
+<div class="mask" id="accMask">
+  <div class="modal">
+    <h3 id="accModalTitle">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <span id="accModalTitleText">添加邮箱账号</span>
+    </h3>
+    <input type="hidden" id="e_id">
+    <div class="grid2">
+      <div><label for="e_name">别名</label><input class="grow" id="e_name" placeholder="如 waifu-163"></div>
+      <div><label for="e_email">邮箱地址</label><input class="grow" id="e_email" placeholder="xxx@163.com"></div>
+      <div><label for="e_host">IMAP 主机</label><input class="grow" id="e_host" placeholder="imap.163.com"></div>
+      <div><label for="e_port">端口</label><input class="grow" id="e_port" placeholder="993" value="993"></div>
+      <div>
+        <label for="e_pass">IMAP 授权码<span id="e_pass_label_hint"></span></label>
+        <div style="position:relative">
+          <input class="grow" id="e_pass" type="password" placeholder="非登录密码，是邮箱网页端生成的授权码" style="padding-right:80px">
+          <span id="e_pass_status" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--ok);pointer-events:none"></span>
+        </div>
+      </div>
+      <div><label for="e_folder">扫描文件夹</label><input class="grow" id="e_folder" placeholder="INBOX 或 INBOX,Sent Messages"></div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 10px;padding-left:104px">多个文件夹用逗号分隔（如 INBOX,Sent Messages），可同时扫描收件箱、已发送等多个位置</div>
+      <div><label for="e_fetch_mode">抓取模式</label>
+        <select class="grow" id="e_fetch_mode">
+          <option value="incremental">增量（只拉新邮件）</option>
+          <option value="full">全量（按时间范围重扫）</option>
+        </select>
+      </div>
+      <div><label for="e_fetch_method">抓取方式</label>
+        <select class="grow" id="e_fetch_method">
+          <option value="imap">IMAP（标准，仅活跃文件夹）</option>
+          <option value="tencent_api">腾讯官方 API（可突破归档不可见限制，需配置凭证）</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 10px;padding-left:104px">选"腾讯官方 API"需先在 config/tencent.json 填入 corpid/secret；受腾讯后台权限约束，能否取到归档区邮件以实际诊断为准</div>
+      <div><label>默认时间范围</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="date" class="grow" id="e_since_from" title="开始日期">
+          <span style="color:#888">至</span>
+          <input type="date" class="grow" id="e_since_to" title="结束日期">
+        </div>
+      </div>
+      <div><label for="e_keywords">发票关键词覆盖</label>
+        <input class="grow" id="e_keywords" placeholder="发票,行程单（空=用全局）">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="e_ssl" checked> 使用 SSL
+      </label>
+    </div>
+    <div class="msg" id="accMsg"></div>
+    <div class="acts">
+      <button class="ghost" onclick="closeAccModal()">取消</button>
+      <button onclick="saveAcc()">保存</button>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin:12px 0 0;line-height:1.6">
+      授权码来自各邮箱网页端「设置 → POP3/SMTP/IMAP」。保存后可点「测试」验证连接，或「抓取」拉发票。
+      网易系邮箱（163/126/188/yeah）必须先在网页端开启 IMAP 并生成授权码，且首次新客户端登录可能需要在邮箱网页端确认提醒。
+    </p>
+  </div>
+</div>
+
+<script>
+/* ======================================================== 通用 */
+let editingIsUpload = false;  // 当前编辑的账号是否为本地上传虚拟账号（保护 email 不被改、跳过邮箱校验）
+
+const API = (p, opt) => fetch(p, opt).then(r => r.json());
+
+// ---- 后台任务进度（统一 删除/上传/导出/账号删除 的异步与进度 UI） ----
+function setExp(t){ const e=document.getElementById('expMsg'); if(e) e.textContent=t; }
+function showJobBar(){ const b=document.getElementById('jobBar'); if(b) b.style.display='block'; updateJobBar({done:0,total:1}); }
+function hideJobBar(){ const b=document.getElementById('jobBar'); if(b) b.style.display='none'; }
+function updateJobBar(j){
+  const f=document.getElementById('jobBarFill'); if(!f) return;
+  const t=+j.total||0, d=+j.done||0;
+  f.style.width = t>0 ? Math.min(100, Math.round(d/t*100))+'%' : '0%';
+}
+// 轮询后台任务：onProgress(job) 每次收到状态调用；onDone(job) 任务结束（含失败）调用。最多约 12 分钟。
+async function pollJob(jid, onProgress, onDone){
+  for(let k=0; k<2400; k++){
+    let j;
+    try { j = await API('/api/jobs/'+jid); }
+    catch(e){ await new Promise(r=>setTimeout(r,400)); continue; }
+    if(j.error){ j.running=false; if(onProgress) onProgress(j); if(onDone) onDone(j); return; }
+    if(onProgress) onProgress(j);
+    if(!j.running){ if(onDone) onDone(j); return; }
+    await new Promise(r=>setTimeout(r,350));
+  }
+}
+
+function fmtMoney(v){
+  const n = parseFloat(v);
+  if (isNaN(n)) return v || '';
+  return '¥' + n.toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+// 列表「发票文件」单元格：根据 pdf_path 后缀决定展示与行为，保证「列表所见」与「能打开」一一对应：
+//   - 无 pdf_path（仅标题兜底的发票）→ 显示"仅标题"，不提供会 404 的链接；
+//   - .ofd（电子发票官方格式，浏览器无法内嵌渲染）→ 显示"下载OFD"，服务端以附件形式下发，避免"无法加载"；
+//   - 其它（.pdf）→ 显示"查看"，新标签页渲染。
+function pdfCell(r){
+  const p = r.pdf_path || '';
+  if (!p) return '<span style="color:#bbb">仅标题</span>';
+  const isOfd = p.toLowerCase().endsWith('.ofd');
+  const label = isOfd ? '下载OFD' : '查看';
+  return `<a href="/api/pdf/${r.id}" target="_blank"${isOfd ? ' download' : ''}>${label}</a>`;
+}
+
+function stripEmpty(o){ const r={}; for(const k in o) if(o[k]!=='' && o[k]!=null) r[k]=o[k]; return r; }
+
+/* ======================================================== Tab 切换 */
+// 切回「发票台账」：先即时用缓存渲染（杜绝白屏/数据消失），再后台刷新最新数据
+function showInvoicesTab(){
+  if(_cachedRows.length > 0){
+    renderRows(_cachedRows, _cachedTotal, _loadSeq);
+  }
+  load();
+}
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+    if(btn.dataset.tab==='invoices') showInvoicesTab();  // 切回台账时刷新（抓取后可能有新数据）
+    if(btn.dataset.tab==='accounts') loadAccounts();
+    if(btn.dataset.tab==='fetch') startPoll();
+  });
+});
+
+/* ======================================================== 筛选 */
+function currentFilters(){
+  return {
+    keyword: document.getElementById('f_keyword').value.trim(),
+    account_id: document.getElementById('f_account').value,
+    city: document.getElementById('f_city').value,
+    buyer: document.getElementById('f_buyer').value,
+    date_from: document.getElementById('f_from').value,
+    date_to: document.getElementById('f_to').value,
+  };
+}
+function resetFilters(){
+  ['f_keyword','f_account','f_city','f_buyer','f_from','f_to'].forEach(id=>document.getElementById(id).value='');
+  _cachedRows = [];  // 清除缓存，强制重新加载
+  _cachedTotal = 0;
+  _cachedStats = null;  // 筛选重置：统计缓存一并失效，避免回退到不匹配旧筛选的快照
+  resetPageAndLoad();
+}
+function resetPageAndLoad(){ currentPage=1; load(); }
+
+/* ======================================================== 分页状态 */
+let currentPage = 1;
+let currentPageSize = 50;
+let totalRows = 0;
+let sortK=null, sortAsc=true;
+const selectedIds = new Set();   // 跨页勾选：保存所有已选 id
+
+function totalPages(){ return Math.max(1, Math.ceil(totalRows / currentPageSize)); }
+
+function onPageSizeChange(){
+  currentPageSize = parseInt(document.getElementById('pageSizeSel').value)||50;
+  currentPage = 1;
+  load();
+}
+
+/* ======================================================== 加载发票 */
+let _loadSeq = 0;  // 请求序号，防止异步竞争：只渲染最后一次请求的结果
+let _cachedRows = [];  // 缓存上一次成功加载的行
+let _cachedTotal = 0;  // 缓存上一次成功加载的总数
+
+// 加载发票列表。
+// 并发控制说明：不再使用「加载中跳过」标志，避免快速切换 Tab 时刷新请求被吞掉、
+// 导致切回发票页看到空白。改为 _loadSeq 竞争：每次调用都真正发起请求，
+// 只有「最后一次」请求的结果会被渲染，更早的慢请求结果自动丢弃。
+async function load(){
+  const seq = ++_loadSeq;
+
+  // 同步表头排序箭头显示
+  document.querySelectorAll('#tbl th').forEach(x=>{
+    if(x.dataset.k) x.textContent = x.textContent.replace(/[▲▼]$/,'');
+  });
+  const f = stripEmpty(currentFilters());
+  const params = new URLSearchParams(f);
+  params.set('page', currentPage);
+  params.set('page_size', currentPageSize);
+
+  const tb = document.getElementById('tbody');
+  // 仅在「没有缓存（首次/被清空）」时显示 loading，避免覆盖已有数据造成白屏
+  if(_cachedRows.length === 0){
+    tb.innerHTML = '<tr><td colspan="11" class="empty">加载中…</td></tr>';
+    document.getElementById('empty').style.display = 'none';
+  }
+
+  let data;
+  try{
+    data = await API('/api/invoices?' + params.toString());
+  }catch(e){
+    // 仅当本次仍是最近一次请求时才处理失败，避免旧请求覆盖新结果
+    if(seq === _loadSeq){
+      if(_cachedRows.length > 0){
+        renderRows(_cachedRows, _cachedTotal, seq);   // 有缓存则回退到缓存，绝不留白
+      } else {
+        tb.innerHTML = '<tr><td colspan="11" class="empty" style="color:var(--bad)">加载失败，点击 <a href="javascript:load()">重试</a></td></tr>';
+      }
+    }
+    return;
+  }
+
+  // 异步竞争：仅渲染最后一次请求的结果，更早的慢请求直接丢弃
+  if(seq !== _loadSeq) return;
+
+  const rows = data.rows || [];
+  const total = data.total || 0;
+
+  // 返回空结果但有缓存时，沿用缓存数据，避免列表突然消失
+  if(total === 0 && _cachedRows.length > 0){
+    renderRows(_cachedRows, _cachedTotal, seq);
+  } else {
+    _cachedRows = rows;
+    _cachedTotal = total;
+    renderRows(rows, total, seq);
+  }
+}
+
+function renderRows(rows, total, seq){
+  const tb = document.getElementById('tbody');
+  document.getElementById('empty').style.display = rows.length ? 'none':'block';
+  totalRows = total;
+  document.getElementById('totalCnt').textContent = total;
+  document.getElementById('cnt') && (document.getElementById('cnt').textContent = total);
+
+  if(sortK){
+    rows.sort((a,b)=>{
+      let x=a[sortK], y=b[sortK];
+      if(sortK==='amount'){x=parseFloat(x)||0;y=parseFloat(y)||0;}
+      if(x<y)return sortAsc?-1:1; if(x>y)return sortAsc?1:-1; return 0;
+    });
+  }
+  const startIdx = (currentPage-1)*currentPageSize;
+  tb.innerHTML = rows.map((r,i)=>{
+    const checked = selectedIds.has(r.id) ? 'checked' : '';
+    return `
+    <tr>
+      <td class="checkbox-cell"><input type="checkbox" class="chk rowchk" data-id="${r.id}" ${checked} onchange="onRowCheck(this, ${r.id})"></td>
+      <td>${startIdx+i+1}</td>
+      <td>${r.account_name||r.account_email||''}</td>
+      <td>${r.buyer||'<span style="color:#bbb">—</span>'}</td>
+      <td>${r.invoice_no||'—'}</td>
+      <td class="num">${fmtMoney(r.amount)}</td>
+      <td>${r.invoice_date||'—'}</td>
+      <td>${r.seller||'—'}</td>
+      <td>${r.city?`<span class="tag">${r.city}</span>`:'—'}</td>
+      <td>${pdfCell(r)}</td>
+      <td><button class="mini danger ghost" onclick="deleteOne(${r.id})" title="删除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        删除
+      </button></td>
+    </tr>`;
+  }).join('');
+  if(sortK){
+    const th = document.querySelector(`#tbl th[data-k="${sortK}"]`);
+    if(th) th.textContent += sortAsc?'▲':'▼';
+  }
+  renderPager();
+  syncSel();
+  loadStats();
+}
+
+document.querySelectorAll('#tbl th[data-k]').forEach(th=>{
+  th.onclick=()=>{
+    const k=th.dataset.k;
+    document.querySelectorAll('#tbl th').forEach(x=>{
+      if(x.dataset.k) x.textContent=x.textContent.replace(/[▲▼]$/,'');
+    });
+    if(sortK===k) sortAsc=!sortAsc; else {sortK=k;sortAsc=true;}
+    th.textContent += sortAsc?'▲':'▼';
+    load();
+  };
+});
+
+/* ======================================================== 分页器渲染 */
+function renderPager(){
+  const tp = totalPages();
+  const pi = document.getElementById('pageInfo');
+  const pages = document.getElementById('pages');
+  if(totalRows === 0){
+    pi.textContent = '';
+    pages.innerHTML = '';
+    return;
+  }
+  const from = (currentPage-1)*currentPageSize + 1;
+  const to = Math.min(currentPage*currentPageSize, totalRows);
+  pi.textContent = `第 ${from}-${to} 条 / 共 ${totalRows} 条`;
+
+  let html = '';
+  // 上一页
+  html += `<button ${currentPage<=1?'disabled':''} onclick="gotoPage(${currentPage-1})">‹</button>`;
+  // 页码：1 ... curr-1 curr curr+1 ... tp
+  const pns = pageNumbers(currentPage, tp);
+  for(const p of pns){
+    if(p==='...') html += `<span style="padding:0 4px;color:var(--muted)">…</span>`;
+    else html += `<button class="${p===currentPage?'active':''}" onclick="gotoPage(${p})">${p}</button>`;
+  }
+  // 下一页
+  html += `<button ${currentPage>=tp?'disabled':''} onclick="gotoPage(${currentPage+1})">›</button>`;
+  pages.innerHTML = html;
+}
+function pageNumbers(cur, total){
+  // 简洁分页：始终显示 1 和 total，当前页前后 1 页
+  const set = new Set([1, total, cur, cur-1, cur+1, cur-2, cur+2]);
+  const arr = [...set].filter(x=>x>=1 && x<=total).sort((a,b)=>a-b);
+  const out = [];
+  for(let i=0;i<arr.length;i++){
+    if(i>0 && arr[i]-arr[i-1]>1) out.push('...');
+    out.push(arr[i]);
+  }
+  return out;
+}
+function gotoPage(p){
+  if(p<1 || p>totalPages()) return;
+  currentPage = p;
+  // 翻页时不清除缓存，保持列表连续性
+  load();
+}
+
+/* ======================================================== 勾选（跨页） */
+function onRowCheck(box, id){
+  if(box.checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  syncSel();
+}
+function syncSel(){
+  document.getElementById('selCnt').textContent = selectedIds.size;
+  // 当前页全选状态
+  const rowChks = document.querySelectorAll('.rowchk');
+  const allBox = document.getElementById('selAll');
+  if(rowChks.length === 0){ allBox.checked = false; return; }
+  allBox.checked = Array.from(rowChks).every(c=>c.checked);
+}
+function toggleAll(box){
+  document.querySelectorAll('.rowchk').forEach(c=>{
+    c.checked = box.checked;
+    const id = parseInt(c.dataset.id);
+    if(box.checked) selectedIds.add(id); else selectedIds.delete(id);
+  });
+  syncSel();
+}
+
+/* ======================================================== 统计 */
+// 缓存 + 竞争保护：与 load() 同模式，避免抓取期间 /api/stats 请求失败或并发竞争
+// 导致统计区（发票张数/合计金额）归零。请求失败时沿用上次成功快照，绝不留白。
+let _cachedStats = null;   // 上一次成功拿到的统计快照
+let _statsSeq = 0;         // 请求序号：只渲染最后一次请求的结果，丢弃更早的慢请求
+async function loadStats(){
+  const seq = ++_statsSeq;
+  const f = stripEmpty(currentFilters());
+  let s;
+  try{
+    s = await API('/api/stats?' + new URLSearchParams(f));
+  }catch(e){
+    // 请求失败（网络/超时/500）：仍是最近一次请求且有缓存则沿用，绝不归零
+    if(seq === _statsSeq && _cachedStats){
+      renderStats(_cachedStats);
+    }
+    return;
+  }
+  // 异步竞争：仅渲染最后一次请求的结果，更早的慢请求直接丢弃
+  if(seq !== _statsSeq) return;
+  _cachedStats = s;
+  renderStats(s);
+}
+// 渲染统计卡片（供 loadStats 成功/回退缓存两处复用，保证渲染逻辑单一真相源）
+function renderStats(s){
+  let html = `
+    <div class="card"><div class="k">发票张数</div><div class="v">${s.count}</div></div>
+    <div class="card"><div class="k">合计金额</div><div class="v">${fmtMoney(s.total)}</div></div>`;
+  const top = Object.entries(s.by_buyer||{}).slice(0,3);
+  if(top.length){
+    html += `<div class="card top"><div class="k">买方 TOP 3</div><div class="v">${top.map(([k,v])=>`${escapeHtml(k)} <small>${fmtMoney(v)}</small>`).join('<br>')}</div></div>`;
+  }
+  document.getElementById('stats').innerHTML = html;
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function formatSince(s){
+  if (!s) return '最近90天';
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})~(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return m[1]+'-'+m[2]+'-'+m[3]+' ～ '+m[4]+'-'+m[5]+'-'+m[6];
+  var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (d) return d[1]+'-'+d[2]+'-'+d[3]+' 起';
+  return s;
+}
+
+/* ======================================================== 下拉选项 + 账号列表 */
+async function loadSelectors(){
+  const [accs, cities, buyers] = await Promise.all([
+    API('/api/accounts'), API('/api/cities'), API('/api/buyers')]);
+  document.getElementById('f_account').innerHTML =
+    '<option value="">全部邮箱</option>' + accs.map(a=>`<option value="${a.id}">${escapeHtml(a.name)} (${escapeHtml(a.email)})</option>`).join('');
+  document.getElementById('f_city').innerHTML =
+    '<option value="">全部城市</option>' + cities.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  document.getElementById('f_buyer').innerHTML =
+    '<option value="">全部买方</option>' + buyers.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+  renderAccounts(accs);
+  const st = await API('/api/fetch/status');
+  document.getElementById('autoMin').value = Math.round((st.auto_interval||0)/60);
+  document.getElementById('autoState').innerHTML = (st.auto_interval>0)
+    ? `<b>已开启</b>（每 ${Math.round(st.auto_interval/60)} 分钟）` : '未开启';
+}
+
+async function loadAccounts(){
+  const accs = await API('/api/accounts');
+  renderAccounts(accs);
+}
+
+function renderAccounts(accs){
+  document.getElementById('accCnt').textContent = accs.length;
+  document.getElementById('acc_list').innerHTML = accs.length ? accs.map(a=>{
+    // provider==='upload' 是后端写入的本地上传虚拟账号（非邮箱），禁用邮箱专属操作（测试/抓取）
+    const isUpload = a.provider === 'upload';
+    return `
+    <div class="acc ${isUpload?'acc-local':''}">
+      <span class="badge ${a.enabled?'on':'off'}">${a.enabled?'启用':'停用'}</span>
+      ${isUpload ? '<span class="badge local">本地上传</span>' : ''}
+      <div class="meta">
+        <span class="nm">${escapeHtml(a.name)}</span>
+        <span class="em">${isUpload ? '本地文件上传入口（非邮箱）' : escapeHtml(a.email) + ' · ' + escapeHtml(a.imap_host||'—') + ':' + (a.imap_port||'')}</span>
+      </div>
+      <span class="stat">最近抓取 ${escapeHtml(a.last_fetch||'从未')}</span>
+        <span class="stat">${a.fetch_mode==='full'?'全量':'增量'} · ${a.fetch_method==='tencent_api'?'腾讯API':'IMAP'} · ${formatSince(a.default_since)}</span>
+      <span class="btns">
+        <button class="mini ghost" onclick="openEdit(${a.id})">编辑</button>
+        ${isUpload ? '' : '<button class="mini ghost" onclick="testAcc(${a.id})">测试</button>'}
+        ${isUpload ? '' : '<button class="mini" onclick="fetchAcc(${a.id})">抓取</button>'}
+        <button class="mini ghost" onclick="toggleAcc(${a.id}, ${a.enabled?0:1})">${a.enabled?'停用':'启用'}</button>
+        <button class="mini danger" onclick="delAcc(${a.id})">删除</button>
+      </span>
+    </div>`;
+  }).join('') : '<div class="empty">还没有账号，点上方「添加邮箱账号」开始。</div>';
+}
+
+/* ======================================================== 账号弹窗（添加 + 编辑 统一） */
+function openAdd(){
+  editingIsUpload = false;
+  // 恢复所有字段可编辑（编辑本地上传账号时曾被禁用，添加邮箱需全部可用）
+  ['e_email','e_host','e_port','e_ssl','e_folder','e_pass'].forEach(id=>{
+    const el = document.getElementById(id); el.disabled = false; el.style.opacity = '';
+  });
+  document.getElementById('accModalTitleText').textContent = '添加邮箱账号';
+  document.getElementById('e_id').value = '';
+  ['e_name','e_email','e_host','e_pass','e_folder'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('e_fetch_mode').value = 'incremental';
+  document.getElementById('e_fetch_method').value = 'imap';
+  document.getElementById('e_since_from').value = '';
+  document.getElementById('e_since_to').value = '';
+  document.getElementById('e_keywords').value = '';
+  document.getElementById('e_port').value='993';
+  document.getElementById('e_ssl').checked = true;
+  document.getElementById('e_pass_label_hint').textContent = '';
+  document.getElementById('e_pass_status').textContent = '';
+  document.getElementById('e_pass').placeholder = '非登录密码，是邮箱网页端生成的授权码';
+  document.getElementById('accMsg').textContent = '';
+  document.getElementById('accMask').classList.add('show');
+}
+
+async function openEdit(id){
+  const a = await API(`/api/accounts/${id}`);
+  if(!a || a.id===undefined){ alert('读取账号失败'); return; }
+  // 本地上传虚拟账号（provider==='upload'）：非邮箱，锁定 email、禁用 IMAP 配置，仅可改名称
+  editingIsUpload = a.provider === 'upload';
+  if(editingIsUpload){
+    document.getElementById('accModalTitleText').textContent = '编辑本地上传账号';
+    ['e_host','e_port','e_ssl','e_folder','e_pass'].forEach(id=>{ const el=document.getElementById(id); el.disabled=true; el.style.opacity='0.5'; });
+    const em = document.getElementById('e_email'); em.disabled = true; em.style.opacity = '0.7';
+  } else {
+    document.getElementById('accModalTitleText').textContent = '编辑邮箱账号';
+    ['e_email','e_host','e_port','e_ssl','e_folder','e_pass'].forEach(id=>{ const el=document.getElementById(id); el.disabled=false; el.style.opacity=''; });
+  }
+  document.getElementById('e_id').value = a.id;
+  document.getElementById('e_name').value = a.name||'';
+  document.getElementById('e_email').value = a.email||'';
+  document.getElementById('e_host').value = a.imap_host||'';
+  document.getElementById('e_port').value = a.imap_port||993;
+  const passInput = document.getElementById('e_pass');
+  const passStatus = document.getElementById('e_pass_status');
+  const passHint = document.getElementById('e_pass_label_hint');
+  passInput.value = '';
+  if(a.password_set){
+    passStatus.textContent = '✓ 已保存';
+    passHint.textContent = '（留空=不修改）';
+    passInput.placeholder = '••••••••••••';
+    passInput.style.letterSpacing = '2px';
+  } else {
+    passStatus.textContent = '';
+    passHint.textContent = '';
+    passInput.placeholder = '请输入 IMAP 授权码';
+    passInput.style.letterSpacing = 'normal';
+  }
+  document.getElementById('e_folder').value = a.folder||'INBOX';
+  document.getElementById('e_fetch_mode').value = a.fetch_mode || 'incremental';
+  document.getElementById('e_fetch_method').value = a.fetch_method || 'imap';
+  // 解析 default_since 回显到日期选择器
+  var ds = a.default_since || '';
+  var m = ds.match(/^(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})$/);
+  if (m) {
+    document.getElementById('e_since_from').value = m[1];
+    document.getElementById('e_since_to').value = m[2];
+  } else {
+    // 单日或 90d → 清空，让用户自己选
+    document.getElementById('e_since_from').value = '';
+    document.getElementById('e_since_to').value = '';
+  }
+  document.getElementById('e_keywords').value = a.keywords_override
+    ? JSON.parse(a.keywords_override).join(',') : '';
+  document.getElementById('e_ssl').checked = !!a.use_ssl;
+  document.getElementById('accMsg').textContent = a.password_set
+    ? '✅ 授权码已保存。密码框留空 = 保留原值；重新输入 = 覆盖。'
+    : '⚠️ 尚未设置授权码，请输入后保存。';
+  document.getElementById('accMask').classList.add('show');
+  if(editingIsUpload){ document.getElementById('accMsg').textContent = '本地上传账号：无需邮箱配置，仅可修改名称。'; }
+  passInput.oninput = function(){
+    if(this.value){
+      passStatus.textContent = '';
+      this.style.letterSpacing = 'normal';
+    } else if(a.password_set){
+      passStatus.textContent = '✓ 已保存';
+      this.style.letterSpacing = '2px';
+    } else {
+      passStatus.textContent = '';
+      this.style.letterSpacing = 'normal';
+    }
+  };
+}
+function closeAccModal(){
+  document.getElementById('accMask').classList.remove('show');
+  document.getElementById('e_pass_status').textContent = '';
+}
+
+async function saveAcc(){
+  const id = document.getElementById('e_id').value;
+  const body = {
+    name: document.getElementById('e_name').value.trim(),
+    email: document.getElementById('e_email').value.trim(),
+    imap_host: document.getElementById('e_host').value.trim(),
+    imap_port: parseInt(document.getElementById('e_port').value)||993,
+    password: document.getElementById('e_pass').value,
+    folder: document.getElementById('e_folder').value.trim()||'INBOX',
+    fetch_mode: document.getElementById('e_fetch_mode').value,
+    fetch_method: document.getElementById('e_fetch_method').value||'imap',
+    default_since: (() => {
+      const f = document.getElementById('e_since_from').value;
+      const t = document.getElementById('e_since_to').value;
+      if (!f && !t) return '90d';
+      if (f && t) return `${f}~${t}`;       // 闭区间 YYYY-MM-DD~YYYY-MM-DD
+      if (f) return f;                       // 仅开始日期
+      // 仅结束日期 → 从今天往前推
+      const d = new Date();
+      return d.toISOString().slice(0, 10);
+    })(),
+    keywords_override: document.getElementById('e_keywords').value.trim()
+      ? JSON.stringify(document.getElementById('e_keywords').value.split(',').map(s=>s.trim()).filter(Boolean))
+      : null,
+    use_ssl: document.getElementById('e_ssl').checked,
+    enabled: true,
+  };
+  // 本地上传账号无需 IMAP 主机；其余账号邮箱与主机必填
+  if(!editingIsUpload && (!body.email || !body.imap_host)){ alert('邮箱和 IMAP 主机必填'); return; }
+  if(editingIsUpload){ body.provider = 'upload'; }  // 防止 upsert 把 provider 刷成 NULL，导致失去本地上传标识
+  const msg = document.getElementById('accMsg');
+  msg.textContent = '保存中…';
+  try{
+    if(id){
+      const r = await API(`/api/accounts/${id}/update`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      msg.textContent = r.msg || '已保存';
+      if(r.ok){ closeAccModal(); loadAccounts(); loadSelectors(); }
+    } else {
+      const r = await API('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      msg.textContent = r.msg || '已添加';
+      if(r.ok){ closeAccModal(); loadAccounts(); loadSelectors(); }
+    }
+  }catch(e){ msg.textContent = '保存失败：'+e; }
+}
+
+async function toggleAcc(id, en){
+  await API(`/api/accounts/${id}/toggle`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:en})});
+  loadAccounts(); loadSelectors();
+}
+async function delAcc(id){
+  if(!confirm('确认删除该账号？相关发票记录会保留。')) return;
+  // 账号删除含级联目录清理，可能较久，走后台任务并轮询
+  const r = await API(`/api/accounts/${id}/delete`, {method:'POST'});
+  if(!(r.ok && r.job_id)){ alert('删除失败'); return; }
+  await pollJob(r.job_id,
+    j => { const m=document.getElementById('accMsg'); if(m) m.textContent = j.error ? ('删除失败：'+j.error) : (j.msg||'删除中…'); },
+    j => {
+      const m=document.getElementById('accMsg'); if(m) m.textContent = j.error ? ('删除失败：'+j.error) : '账号已删除';
+      loadAccounts(); loadSelectors();
+    });
+}
+async function testAcc(id){
+  const msg = document.getElementById('accMsg');
+  msg.textContent = '测试连接中…';
+  const r = await API(`/api/accounts/${id}/test`, {method:'POST'});
+  msg.textContent = r.msg || (r.ok?'连接成功':'连接失败');
+  alert(r.msg || (r.ok?'连接成功':'连接失败'));
+}
+async function fetchAcc(id){
+  await API(`/api/accounts/${id}/fetch`, {method:'POST'});
+  // 切到抓取 Tab
+  document.querySelector('.tab-btn[data-tab="fetch"]').click();
+  startPoll();
+}
+
+/* ======================================================== 抓取 */
+async function fetchAll(){
+  const since = document.getElementById('fetchSinceInput').value.trim() || null;
+  await API('/api/fetch', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(since ? {since} : {})});
+  document.querySelector('.tab-btn[data-tab="fetch"]').click();
+}
+async function setAuto(){
+  const min = parseInt(document.getElementById('autoMin').value)||0;
+  const r = await API('/api/fetch/auto', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({interval: min*60})});
+  document.getElementById('autoState').innerHTML = (r.auto_interval>0) ? `<b>已开启</b>（每 ${min} 分钟）` : '未开启';
+}
+let pollTimer=null;
+let pendingReparse = false;  // 标记：当前轮询的是「重新解析」任务（完成后自动切回台账）
+// 跟踪抓取是否真正运行过。修复 bug：原逻辑只要 running=False 就清缓存 + load()，
+// 会在两种场景误清空发票台账：
+//   1) 用户只是切到「抓取」Tab（根本没在抓取）→ running=False → 误判完成 → 清缓存；
+//   2) 点了「立即抓取」后后台线程还没来得及把 FETCH_RUNNING 设为 True（调度延迟），
+//      首次轮询 running=False → 误判完成 → 清缓存 + load()，此时抓取刚开始写库，
+//      /api/invoices 一旦失败，缓存已空，load() 的 catch 回退失效 → 台账归零。
+let _fetchWasRunning = false;
+function startPoll(){
+  if(pollTimer) clearInterval(pollTimer);
+  _fetchWasRunning = false;
+  let idleTicks = 0;  // 空闲轮询计数：抓取一直没启动时，避免无限轮询空耗
+  pollTimer = setInterval(async ()=>{
+    const st = await API('/api/fetch/status');
+    document.getElementById('fetchStatePill').innerHTML = st.running
+      ? '<b style="color:var(--warn)">抓取运行中…</b>'
+      : '<span style="color:var(--ok)">空闲</span>';
+    const logEl = document.getElementById('fetchLog');
+    if(st.log && st.log.length){
+      logEl.textContent = st.log.join('\n');
+      logEl.scrollTop = 1e9;
+    }
+    if(st.running){
+      // 抓取正在运行：标记，等它真正完成时再刷新
+      _fetchWasRunning = true;
+      idleTicks = 0;
+    } else if(_fetchWasRunning){
+      // 抓取从「运行中」→「完成」：此时才刷新列表。
+      // 关键：不清缓存！load() 成功会自动更新缓存（_cachedRows=rows），
+      // 失败则回退旧缓存（renderRows(_cachedRows,...)），绝不归零。
+      _fetchWasRunning = false;
+      clearInterval(pollTimer); pollTimer=null;
+      loadAccounts(); loadSelectors();
+      if(pendingReparse){
+        pendingReparse = false;
+        document.getElementById('expMsg').textContent = '重新解析完成，已刷新列表';
+      }
+      load();  // 抓取完成后刷新列表（不清缓存，失败时由 load() 内部回退旧数据）
+    } else {
+      // 抓取从未运行（用户只是切到抓取 Tab，或后台线程还没起来）：
+      // 不清缓存、不 load()，避免误清空台账。给后台线程几轮启动时间后停止轮询。
+      idleTicks++;
+      if(idleTicks > 5){ clearInterval(pollTimer); pollTimer=null; }
+    }
+  }, 1200);
+}
+
+/* ======================================================== 上传 PDF */
+async function uploadFiles(input){
+  const files = Array.from(input.files||[]);
+  if(!files.length) return;
+  const payload = { files: [] };
+  for(const f of files){
+    const buf = new Uint8Array(await f.arrayBuffer());
+    let bin = '';
+    const CH = 0x8000;
+    for(let p=0; p<buf.length; p+=CH){ bin += String.fromCharCode.apply(null, buf.subarray(p, p+CH)); }
+    payload.files.push({ name: f.name, b64: btoa(bin) });
+  }
+  input.value='';
+  showJobBar();
+  const r = await API('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('导入失败'); return; }
+  // 后台异步导入：轮询进度，界面不冻结
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('导入失败：'+j.error) : (j.msg||'导入中…')); },
+    j => { hideJobBar(); setExp(j.error ? ('导入失败：'+j.error) : '导入完成'); loadSelectors(); load(); });
+}
+
+/* ======================================================== 导出 */
+async function exportSelected(){
+  const ids = Array.from(selectedIds);
+  if(!ids.length){ alert('请先勾选要导出的发票（可跨页勾选）'); return; }
+  showJobBar();
+  const r = await API('/api/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('导出失败'); return; }
+  // 后台构建 zip：轮询进度，完成后自动触发下载（不再阻塞请求线程）
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('导出失败：'+j.error) : (j.msg||'打包中…')); },
+    j => {
+      hideJobBar();
+      if(j.error){ setExp('导出失败：'+j.error); return; }
+      setExp(`已导出 ${ids.length} 张`);
+      const a = document.createElement('a');
+      a.href = '/api/jobs/'+r.job_id+'/download';
+      a.download = j.result_name || '发票打包.zip';
+      a.click();
+    });
+}
+
+/* ======================================================== 删除 */
+async function deleteOne(id){
+  if(!confirm('确认删除这张发票？PDF 文件会保留在本地。')) return;
+  const r = await API(`/api/invoices/${id}/delete`, {method:'POST'});
+  if(r.ok){
+    selectedIds.delete(id);
+    load();
+    loadStats();
+  } else {
+    alert('删除失败');
+  }
+}
+
+async function deleteSelected(){
+  const ids = Array.from(selectedIds);
+  if(!ids.length){ alert('请先勾选要删除的发票（可跨页勾选）'); return; }
+  if(!confirm(`确认删除选中的 ${ids.length} 张发票？PDF 文件会保留在本地。`)) return;
+  // 后端改为后台异步删除：立即返回 job_id，前端轮询进度，避免大批量时界面卡死
+  showJobBar();
+  const r = await API('/api/invoices/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('删除失败'); return; }
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('删除失败：'+j.error) : (j.running ? `正在删除… ${j.done||0}/${j.total||0}` : (j.msg||'已删除'))); },
+    j => {
+      hideJobBar();
+      setExp(j.error ? ('删除失败：'+j.error) : (j.msg||'已删除'));
+      for(const id of ids) selectedIds.delete(id);
+      load(); loadStats();
+    });
+}
+
+async function reparseAll(){
+  if(!confirm('用最新的解析规则重新扫描所有已入库发票的 PDF？\n（用于补全之前没识别出来的字段，比如买方、销售方。')) return;
+  const r = await API('/api/invoices/reparse', {method:'POST'});
+  if(r.ok){
+    pendingReparse = true;  // 标记：任务完成后自动刷新台账
+    document.getElementById('expMsg').innerHTML = '正在重新解析… <a href="javascript:gotoFetchTab()" style="margin-left:6px">查看日志</a>';
+    // 留在当前 Tab，不强制切走 —— 启动轮询，完成后自动刷新列表
+    startPoll();
+  } else {
+    alert(r.msg || '启动失败');
+  }
+}
+function gotoFetchTab(){ document.querySelector('.tab-btn[data-tab="fetch"]').click(); }
+
+async function reconcile(dry){
+  const tip = dry ? '仅预览：列出会回填进库的 PDF，不写库、不动文件？' : '把磁盘上已下载但未进发票表的 PDF 回填进库？\n（删除发票后文件还在、或之前没解析成功的情况都能找回）';
+  if(!confirm(tip)) return;
+  const r = await API('/api/reconcile', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({dry_run: !!dry})});
+  if(r.ok){
+    pendingReparse = true;   // 复用轮询：任务完成后自动刷新台账
+    document.getElementById('expMsg').innerHTML = (dry?'对账预览中…':'对账修复中…') +
+      ' <a href="javascript:gotoFetchTab()" style="margin-left:6px">查看日志</a>';
+    startPoll();
+  } else {
+    alert(r.msg || '启动失败');
+  }
+}
+
+/* ======================================================== 回车查询 */
+document.getElementById('f_keyword').addEventListener('keydown', e=>{ if(e.key==='Enter') resetPageAndLoad(); });
+
+/* ======================================================== 启动 */
+loadSelectors();
+load();
+</script>
+</body>
+</html>

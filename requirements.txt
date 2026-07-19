@@ -1,0 +1,20 @@
+# 发票抓取与解析依赖
+# 安装：pip install -r requirements.txt
+
+# HTTP 请求（IMAP 之外的邮件正文链接抓取、51发票接口调用）
+requests==2.34.2
+
+# HTML 解析（engine 用 BeautifulSoup(html, "lxml")，需 lxml 作为解析器后端）
+beautifulsoup4==4.15.0
+lxml==6.1.1
+
+# PDF 解析（PyMuPDF，import 名为 fitz；布局法坐标提取 + 文本/扫描件 OCR 兜底）
+pymupdf==1.28.0
+
+# 发票导出 Excel（web/app.py、hub.py 的台账/汇总导出）
+openpyxl==3.1.5
+
+# 51发票（百望云）PDF 下载：SM4(ECB) 解密依赖，纯 Python 国密实现
+# 该库用于逆向出的 51发票下载链路（uuid 解密 / 接口参数加解密 / 响应解密）。
+# 未安装时仅 51发票短链下载会运行时报错，其它平台不受影响。
+gmssl==3.2.2
