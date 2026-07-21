@@ -149,6 +149,10 @@ def _migrate_invoices(c):
         # 仅对“非空发票号”去重；空号（PDF 解析失败）各自独立成行，不再互相覆盖
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_no_uniq "
                   "ON invoices(invoice_no) WHERE invoice_no IS NOT NULL AND invoice_no <> ''")
+        # 补加 remark 列（存储从 PDF 提取的真实发票备注内容，区别于 note 字段记录的元信息）。幂等。
+        inv_cols = {r[1] for r in c.execute("PRAGMA table_info(invoices)").fetchall()}
+        if "remark" not in inv_cols:
+            c.execute("ALTER TABLE invoices ADD COLUMN remark TEXT")
         c.execute("RELEASE inv_mig")
     except Exception as e:
         # 迁移失败不应中断整个 init（应用仍可启动）；回滚保存点后继续
@@ -367,9 +371,9 @@ def insert_invoice(inv):
     try:
         cur = c.execute(
             """INSERT OR IGNORE INTO invoices(email_id,account_id,buyer,seller,amount,invoice_no,
-                 invoice_date,city,pdf_path,source_type,note)
+                 invoice_date,city,pdf_path,source_type,note,remark)
                VALUES(:email_id,:account_id,:buyer,:seller,:amount,:invoice_no,
-                 :invoice_date,:city,:pdf_path,:source_type,:note)""",
+                 :invoice_date,:city,:pdf_path,:source_type,:note,:remark)""",
             inv,
         )
         inserted = cur.rowcount > 0
@@ -613,3 +617,27 @@ def update_invoice_fields(inv_id, fields):
     c.commit()
     c.close()
     return True
+
+
+def get_invoices_for_matching(buyer, date_from, date_to):
+    """按买方模糊匹配取候选发票（供模板匹配引擎使用）。
+
+    buyer: 买方名称（模糊匹配：库值包含模板值 或 模板值包含库值，因为模板常是简写如'南沙友谊'，
+           而库内是全称如'广州南沙友谊人才服务有限公司'）
+    date_from/date_to: 保留参数兼容，但库内 invoice_date 格式可能是'2026年07月10日'中文格式，
+           SQL 字符串比较不可靠，因此实际日期过滤由 matching.py 用 _to_datetime 解析后做。
+    返回 dict 列表，包含 id/amount/invoice_no/invoice_date/buyer/seller/note/remark/pdf_path。
+    按 invoice_date 升序排列。"""
+    c = conn()
+    # 双向 LIKE：库值 LIKE '%模板值%' OR 模板值 LIKE '%库值%'
+    # SQLite 不支持在 LIKE 右侧用列做模式，所以用 instr 双向判断
+    rows = c.execute(
+        """SELECT id, amount, invoice_no, invoice_date, buyer, seller, note, remark, pdf_path
+           FROM invoices
+           WHERE (instr(buyer, ?) > 0 OR instr(?, buyer) > 0)
+             AND invoice_no IS NOT NULL AND invoice_no<>''
+           ORDER BY invoice_date ASC""",
+        (buyer, buyer),
+    ).fetchall()
+    c.close()
+    return [dict(r) for r in rows]

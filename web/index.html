@@ -177,6 +177,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       <span class="lbl">抓取任务</span>
     </button>
+    <button class="tab-btn" data-tab="match">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M3 12h18M3 17h12"/><path d="M21 17l-3-3-3 3"/></svg>
+      <span class="lbl">模板匹配</span>
+    </button>
   </nav>
   <span class="who" id="who"></span>
 </header>
@@ -331,6 +335,139 @@
         抓取进度日志
       </h2>
       <div id="fetchLog">（尚未启动抓取。点上方「立即抓取全部」或在「邮箱账号」Tab 点单账号「抓取」。）</div>
+    </div>
+  </section>
+
+  <!-- ========== Tab 4: 模板匹配 ========== -->
+  <section class="tab-pane" id="tab-match">
+    <!-- ① 上传区 -->
+    <div class="panel" id="matchUploadPanel">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        上传模板文件
+      </h2>
+      <div class="toolbar">
+        <button class="ghost" onclick="matchDownloadTemplate()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          下载标准模板
+        </button>
+        <button onclick="document.getElementById('matchFileIn').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          选择 xlsx 文件
+        </button>
+        <input type="file" id="matchFileIn" accept=".xlsx" style="display:none" onchange="matchUploadFile(this)">
+        <span class="pill" id="matchUploadMsg"></span>
+      </div>
+      <div id="matchSummary" style="display:none;margin-top:14px">
+        <div class="cards" id="matchSummaryCards"></div>
+        <div id="matchColumnMap" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- ② 配置区 -->
+    <div class="panel" id="matchConfigPanel" style="display:none">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        匹配配置
+      </h2>
+      <div class="row" style="margin-bottom:10px">
+        <div>
+          <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">开票日期在发放日期后多少天内</label>
+          <input type="number" id="matchDateRange" value="30" min="1" style="width:120px">
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding-top:18px">
+          <input type="checkbox" id="matchOverwrite" class="chk"> 覆盖已有发票号
+        </label>
+      </div>
+      <div id="matchColumnPicker" style="display:none;margin-bottom:10px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">检测到表头无法自动识别，请确认列映射：</div>
+        <div class="row">
+          <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">金额列</label>
+            <select id="mp_amount" style="min-width:120px"></select></div>
+          <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">回填列（发票号）</label>
+            <select id="mp_invoice_no" style="min-width:120px"></select></div>
+          <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">日期列</label>
+            <select id="mp_date" style="min-width:120px"></select></div>
+          <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">买方列</label>
+            <select id="mp_buyer" style="min-width:120px"></select></div>
+          <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">商社列</label>
+            <select id="mp_merchant" style="min-width:120px"></select></div>
+        </div>
+        <button class="ghost mini" onclick="matchConfirmColumns()" style="margin-top:8px">确认列映射</button>
+        <span class="pill" id="matchColMsg"></span>
+      </div>
+      <div class="toolbar">
+        <button onclick="matchStartRun()" id="matchRunBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          开始匹配
+        </button>
+        <span class="pill" id="matchRunMsg"></span>
+      </div>
+      <div id="matchJobBar" style="display:none;height:4px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin-top:8px">
+        <div id="matchJobBarFill" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div>
+      </div>
+    </div>
+
+    <!-- ③ 预览区 -->
+    <div class="panel" id="matchPreviewPanel" style="display:none">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        匹配结果预览
+      </h2>
+      <div class="cards" id="matchStats"></div>
+      <div id="matchEmptyBanner"></div>
+      <div class="toolbar">
+        <button onclick="matchDownloadExport()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          下载回填文件
+        </button>
+        <button class="ghost" onclick="matchRematch()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          重新匹配
+        </button>
+        <span class="pill" id="matchExportMsg" style="margin-left:auto"></span>
+      </div>
+      <div class="table-wrap" style="max-height:calc(100vh - 460px)">
+        <table id="matchTbl">
+          <thead><tr>
+            <th class="checkbox-cell no-sort">勾选</th>
+            <th class="no-sort">行号</th>
+            <th class="no-sort">发放日期</th>
+            <th class="no-sort">商社</th>
+            <th class="no-sort">收款单位</th>
+            <th class="no-sort">支出金额</th>
+            <th class="no-sort">匹配状态</th>
+            <th class="no-sort">发票号</th>
+            <th class="no-sort">匹配类型</th>
+          </tr></thead>
+          <tbody id="matchTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ④ 未匹配提示区 -->
+    <div class="panel" id="matchUnmatchedPanel" style="display:none">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        未匹配清单
+      </h2>
+      <div class="toolbar">
+        <button class="ghost" onclick="matchExportUnmatched()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          导出未匹配清单
+        </button>
+        <span class="pill" id="matchUnmatchedCnt"></span>
+      </div>
+      <div class="table-wrap" style="max-height:360px">
+        <table>
+          <thead><tr>
+            <th>行号</th>
+            <th>支出金额</th>
+            <th>原因</th>
+          </tr></thead>
+          <tbody id="matchUnmatchedTbody"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1146,6 +1283,416 @@ async function reconcile(dry){
 
 /* ======================================================== 回车查询 */
 document.getElementById('f_keyword').addEventListener('keydown', e=>{ if(e.key==='Enter') resetPageAndLoad(); });
+
+/* ======================================================== 模板匹配 Tab */
+// 状态：file_id（后端返回）、template_info（上传后概要）、result（匹配结果）、matchedSelected（勾选的回填项 row_idx -> invoice_no）
+const matchState = {
+  fileId: null,
+  templateInfo: null,
+  result: null,
+  matchedSelected: new Map(),
+};
+
+function matchSetMsg(id, text, isError){
+  const el = document.getElementById(id); if(!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? 'var(--bad)' : '';
+}
+
+// 下载标准模板（blob → a 标签触发下载）
+async function matchDownloadTemplate(){
+  matchSetMsg('matchUploadMsg', '下载中…');
+  try{
+    const r = await fetch('/api/match/template/download');
+    if(!r.ok){ matchSetMsg('matchUploadMsg', '下载失败：'+r.status, true); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const cd = r.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    a.download = m ? decodeURIComponent(m[1]) : '标准模板.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+    matchSetMsg('matchUploadMsg', '已下载模板');
+  }catch(e){ matchSetMsg('matchUploadMsg', '下载失败：'+e, true); }
+}
+
+// 上传 xlsx：FileReader 读取为 DataURL，去掉前缀得到 base64
+function matchUploadFile(input){
+  const f = (input.files||[])[0];
+  if(!f) return;
+  if(!f.name.toLowerCase().endsWith('.xlsx')){
+    matchSetMsg('matchUploadMsg', '请选择 .xlsx 文件', true);
+    input.value = '';
+    return;
+  }
+  input.value = '';
+  matchSetMsg('matchUploadMsg', '上传中…');
+  const reader = new FileReader();
+  reader.onload = async () => {
+    let b64 = reader.result || '';
+    const idx = b64.indexOf(',');
+    if(idx >= 0) b64 = b64.slice(idx+1);  // 去掉 "data:...;base64," 前缀
+    try{
+      const r = await API('/api/match/upload', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ b64, name: f.name })
+      });
+      if(!r.ok){ matchSetMsg('matchUploadMsg', '上传失败：'+(r.error||''), true); return; }
+      matchState.fileId = r.file_id;
+      matchState.templateInfo = r.template_info;
+      matchState.result = null;
+      matchState.matchedSelected = new Map();
+      matchSetMsg('matchUploadMsg', '上传成功：'+f.name);
+      matchRenderSummary(r.template_info);
+      matchShowConfig(r.template_info);
+    }catch(e){ matchSetMsg('matchUploadMsg', '上传失败：'+e, true); }
+  };
+  reader.onerror = () => matchSetMsg('matchUploadMsg', '读取文件失败', true);
+  reader.readAsDataURL(f);
+}
+
+// 渲染模板概要：总行数 / 已填发票号 / 待匹配 / 列映射
+function matchRenderSummary(info){
+  const total = info.total_rows || 0;
+  const existing = info.existing_invoice_no_count || 0;
+  const pending = Math.max(0, total - existing);
+  document.getElementById('matchSummaryCards').innerHTML = `
+    <div class="card"><div class="k">总行数</div><div class="v">${total}</div></div>
+    <div class="card"><div class="k">已填发票号</div><div class="v">${existing}</div></div>
+    <div class="card"><div class="k">待匹配行数</div><div class="v">${pending}</div></div>`;
+  const cols = info.columns || {};
+  const headers = info.headers || [];
+  const colName = idx => (idx==null || idx<0 || idx>=headers.length) ? '—' : headers[idx];
+  const map = [
+    ['日期列', colName(cols.date)],
+    ['商社列', colName(cols.merchant)],
+    ['买方列', colName(cols.buyer)],
+    ['金额列', colName(cols.amount)],
+    ['回填列', colName(cols.invoice_no)],
+  ];
+  document.getElementById('matchColumnMap').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">识别到的列映射：</div>
+    <div class="row" style="gap:6px">${map.map(([k,v])=>`<span class="tag">${k}: ${escapeHtml(v)}</span>`).join('')}</div>`;
+  document.getElementById('matchSummary').style.display = 'block';
+}
+
+// 显示配置区，根据 ambiguous 决定是否显示列映射下拉
+function matchShowConfig(info){
+  document.getElementById('matchConfigPanel').style.display = 'block';
+  document.getElementById('matchPreviewPanel').style.display = 'none';
+  document.getElementById('matchUnmatchedPanel').style.display = 'none';
+  matchSetMsg('matchRunMsg', '');
+  matchSetMsg('matchColMsg', '');
+  const picker = document.getElementById('matchColumnPicker');
+  if(info && info.ambiguous){
+    picker.style.display = 'block';
+    const headers = info.headers || [];
+    const opts = headers.map((h,i)=>`<option value="${i}">${i}: ${escapeHtml(h)}</option>`).join('');
+    const cols = info.columns || {};
+    ['amount','invoice_no','date','buyer','merchant'].forEach(k=>{
+      const sel = document.getElementById('mp_'+k);
+      sel.innerHTML = opts;
+      if(cols[k]!=null) sel.value = cols[k];
+    });
+  } else {
+    picker.style.display = 'none';
+  }
+}
+
+// 确认列映射（ambiguous 场景）
+async function matchConfirmColumns(){
+  if(!matchState.fileId) return;
+  const columns_map = {
+    amount: parseInt(document.getElementById('mp_amount').value),
+    invoice_no: parseInt(document.getElementById('mp_invoice_no').value),
+    date: parseInt(document.getElementById('mp_date').value),
+    buyer: parseInt(document.getElementById('mp_buyer').value),
+    merchant: parseInt(document.getElementById('mp_merchant').value),
+  };
+  matchSetMsg('matchColMsg', '保存中…');
+  try{
+    const r = await API('/api/match/columns', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ file_id: matchState.fileId, columns_map })
+    });
+    if(!r.ok){ matchSetMsg('matchColMsg', '保存失败', true); return; }
+    matchSetMsg('matchColMsg', '列映射已确认');
+  }catch(e){ matchSetMsg('matchColMsg', '保存失败：'+e, true); }
+}
+
+// 启动匹配：POST /api/match/run → 轮询 job → 加载结果
+async function matchStartRun(){
+  if(!matchState.fileId){ alert('请先上传文件'); return; }
+  const date_range_days = parseInt(document.getElementById('matchDateRange').value)||30;
+  const overwrite = document.getElementById('matchOverwrite').checked;
+  const btn = document.getElementById('matchRunBtn');
+  btn.disabled = true;
+  matchSetMsg('matchRunMsg', '启动中…');
+  document.getElementById('matchJobBar').style.display = 'block';
+  document.getElementById('matchJobBarFill').style.width = '0%';
+  try{
+    const r = await API('/api/match/run', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ file_id: matchState.fileId, date_range_days, overwrite })
+    });
+    if(!r.ok || !r.job_id){
+      btn.disabled = false;
+      document.getElementById('matchJobBar').style.display = 'none';
+      matchSetMsg('matchRunMsg', '启动失败', true);
+      return;
+    }
+    matchSetMsg('matchRunMsg', '匹配进行中…');
+    await pollJob(r.job_id,
+      j => {
+        const t = +j.total||0, d = +j.done||0;
+        const pct = t>0 ? Math.min(100, Math.round(d/t*100)) : 0;
+        document.getElementById('matchJobBarFill').style.width = pct+'%';
+        matchSetMsg('matchRunMsg', j.error ? ('失败：'+j.error) : (j.msg || `进行中 ${d}/${t}`));
+      },
+      async j => {
+        btn.disabled = false;
+        if(j.error){
+          document.getElementById('matchJobBar').style.display = 'none';
+          matchSetMsg('matchRunMsg', '失败：'+j.error, true);
+          return;
+        }
+        document.getElementById('matchJobBarFill').style.width = '100%';
+        matchSetMsg('matchRunMsg', '匹配完成，加载结果…');
+        await matchLoadResult();
+      });
+  }catch(e){
+    btn.disabled = false;
+    document.getElementById('matchJobBar').style.display = 'none';
+    matchSetMsg('matchRunMsg', '错误：'+e, true);
+  }
+}
+
+// 加载匹配结果
+async function matchLoadResult(){
+  if(!matchState.fileId) return;
+  try{
+    const r = await API('/api/match/result/'+matchState.fileId);
+    matchState.result = r;
+    matchRenderResult(r);
+  }catch(e){
+    matchSetMsg('matchRunMsg', '加载结果失败：'+e, true);
+  }
+}
+
+// 渲染结果表格 + 统计栏 + 未匹配清单
+function matchRenderResult(r){
+  document.getElementById('matchConfigPanel').style.display = 'none';
+  document.getElementById('matchPreviewPanel').style.display = 'block';
+  const stats = r.stats || {};
+  document.getElementById('matchStats').innerHTML = `
+    <div class="card"><div class="k">已匹配</div><div class="v" style="color:var(--ok)">${stats.matched||0}</div></div>
+    <div class="card"><div class="k">凑票组</div><div class="v" style="color:var(--warn)">${stats.many_to_one_groups||0}</div></div>
+    <div class="card"><div class="k">未匹配</div><div class="v" style="color:var(--bad)">${stats.unmatched||0}</div></div>
+    <div class="card"><div class="k">跳过</div><div class="v" style="color:var(--muted)">${stats.skipped||0}</div></div>`;
+
+  const matched = r.matched || [];
+  const unmatched = r.unmatched || [];
+  const skipped = r.skipped || [];
+
+  // 空发票库提示：全部未匹配，或所有未匹配原因都是「无候选」
+  const emptyBanner = document.getElementById('matchEmptyBanner');
+  const showEmptyHint = (stats.matched === 0 && stats.unmatched > 0)
+    || (unmatched.length > 0 && unmatched.every(u => (u.reason || '') === '无候选'));
+  if (showEmptyHint) {
+    emptyBanner.innerHTML = '<div style="background:#fdf6e3;border:1px solid #f0d882;color:#8a6d3b;padding:10px 15px;border-radius:6px;margin:10px 0;">未匹配到任何发票，请确认发票库中是否有对应买方的发票。可前往「发票管理」标签页抓取发票后再试。</div>';
+  } else {
+    emptyBanner.innerHTML = '';
+  }
+
+  // 默认勾选所有 matched
+  matchState.matchedSelected = new Map();
+  for(const m of matched){
+    matchState.matchedSelected.set(m.row_idx, m.invoice_no);
+  }
+
+  const matchedByRow = new Map();
+  for(const m of matched) matchedByRow.set(m.row_idx, m);
+  const unmatchedByRow = new Map();
+  for(const u of unmatched) unmatchedByRow.set(u.row_idx, u);
+  const skippedByRow = new Map();
+  for(const s of skipped) skippedByRow.set(s.row_idx, s);
+
+  // 以模板行为主轴，附加未在模板行的结果
+  const templateRows = (matchState.templateInfo && matchState.templateInfo.rows) || [];
+  const allRows = [];
+  const seenRow = new Set();
+  for(const tr of templateRows){
+    seenRow.add(tr.row_idx);
+    allRows.push({
+      row_idx: tr.row_idx,
+      date: tr.date, merchant: tr.merchant, buyer: tr.buyer, amount: tr.amount,
+      matched: matchedByRow.get(tr.row_idx),
+      unmatched: unmatchedByRow.get(tr.row_idx),
+      skipped: skippedByRow.get(tr.row_idx),
+    });
+  }
+  for(const m of matched){
+    if(!seenRow.has(m.row_idx)){
+      seenRow.add(m.row_idx);
+      allRows.push({ row_idx: m.row_idx, date:'', merchant:'', buyer:'', amount: m.amount, matched: m });
+    }
+  }
+  for(const u of unmatched){
+    if(!seenRow.has(u.row_idx)){
+      seenRow.add(u.row_idx);
+      allRows.push({ row_idx: u.row_idx, date:'', merchant:'', buyer:'', amount: u.amount, unmatched: u });
+    }
+  }
+  for(const s of skipped){
+    if(!seenRow.has(s.row_idx)){
+      seenRow.add(s.row_idx);
+      allRows.push({ row_idx: s.row_idx, date:'', merchant:'', buyer:'', amount:'', skipped: s });
+    }
+  }
+  allRows.sort((a,b)=>a.row_idx-b.row_idx);
+
+  const tbody = document.getElementById('matchTbody');
+  tbody.innerHTML = allRows.map(row=>{
+    let bg = '', status = '', invoiceNo = '', matchType = '', checkable = false, checked = false;
+    if(row.matched){
+      checkable = true;
+      checked = matchState.matchedSelected.has(row.row_idx);
+      const mt = row.matched.match_type;
+      if(mt === 'one_to_one'){
+        bg = 'background:#e6f6ec'; status = '已匹配'; matchType = '一对一';
+      } else if(mt === 'many_to_one'){
+        bg = 'background:#fdf6e3'; status = '已匹配(凑票)'; matchType = '多对一';
+      } else {
+        bg = 'background:#e6f6ec'; status = '已匹配'; matchType = mt || '';
+      }
+      invoiceNo = row.matched.invoice_no || '';
+    } else if(row.unmatched){
+      bg = 'background:#fdeaea'; status = '未匹配'; matchType = row.unmatched.reason || '';
+    } else if(row.skipped){
+      bg = 'background:#f1f2f5'; status = '跳过'; matchType = row.skipped.reason || '';
+    } else {
+      bg = 'background:#fdeaea'; status = '未匹配'; matchType = '无候选';
+    }
+    const chk = checkable
+      ? `<input type="checkbox" class="chk mchk" data-row="${row.row_idx}" ${checked?'checked':''} onchange="matchToggleRow(this, ${row.row_idx})">`
+      : '<span style="color:#bbb">—</span>';
+    return `<tr style="${bg}">
+      <td class="checkbox-cell">${chk}</td>
+      <td>${row.row_idx}</td>
+      <td>${escapeHtml(row.date||'')}</td>
+      <td>${escapeHtml(row.merchant||'')}</td>
+      <td>${escapeHtml(row.buyer||'')}</td>
+      <td class="num">${fmtMoney(row.amount)}</td>
+      <td>${status}</td>
+      <td>${escapeHtml(invoiceNo)}</td>
+      <td>${escapeHtml(matchType)}</td>
+    </tr>`;
+  }).join('');
+
+  // 未匹配清单
+  if(unmatched.length){
+    document.getElementById('matchUnmatchedPanel').style.display = 'block';
+    document.getElementById('matchUnmatchedCnt').textContent = `共 ${unmatched.length} 条`;
+    document.getElementById('matchUnmatchedTbody').innerHTML = unmatched.map(u=>
+      `<tr><td>${u.row_idx}</td><td class="num">${fmtMoney(u.amount)}</td><td>${escapeHtml(u.reason||'')}</td></tr>`).join('');
+  } else {
+    document.getElementById('matchUnmatchedPanel').style.display = 'none';
+  }
+  document.getElementById('matchJobBar').style.display = 'none';
+  matchSetMsg('matchRunMsg', '');
+}
+
+// 勾选/取消某条匹配
+function matchToggleRow(box, rowIdx){
+  if(box.checked){
+    const m = matchState.result.matched.find(x=>x.row_idx===rowIdx);
+    if(m) matchState.matchedSelected.set(rowIdx, m.invoice_no);
+  } else {
+    matchState.matchedSelected.delete(rowIdx);
+  }
+}
+
+// 下载回填文件：POST /api/match/export → 轮询 job → 下载
+async function matchDownloadExport(){
+  if(!matchState.fileId){ alert('请先完成匹配'); return; }
+  const confirmed = [];
+  for(const [row_idx, invoice_no] of matchState.matchedSelected.entries()){
+    confirmed.push({ row_idx, invoice_no });
+  }
+  if(!confirmed.length){ alert('请至少勾选一条匹配项用于回填'); return; }
+  matchSetMsg('matchExportMsg', '生成中…');
+  try{
+    const r = await API('/api/match/export', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed })
+    });
+    if(!r.ok || !r.job_id){ matchSetMsg('matchExportMsg', '启动失败', true); return; }
+    await pollJob(r.job_id,
+      j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'生成中…')),
+      async j => {
+        if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
+        matchSetMsg('matchExportMsg', '生成完成，下载中…');
+        const resp = await fetch('/api/jobs/'+r.job_id+'/download');
+        if(!resp.ok){ matchSetMsg('matchExportMsg', '下载失败', true); return; }
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        const cd = resp.headers.get('Content-Disposition') || '';
+        // 优先取 filename*=UTF-8''（百分号编码，支持中文），再退回 filename=
+        let dlName = '回填文件.xlsx';
+        const mStar = cd.match(/filename\*=UTF-8''([^";]+)/i);
+        const mPlain = cd.match(/filename=["']?([^"';]+)/i);
+        if(mStar){
+          try{ dlName = decodeURIComponent(mStar[1]); }
+          catch(e){ dlName = mStar[1]; }
+        } else if(mPlain){
+          dlName = mPlain[1];
+        }
+        a.download = dlName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+        matchSetMsg('matchExportMsg', '已下载');
+      });
+  }catch(e){ matchSetMsg('matchExportMsg', '错误：'+e, true); }
+}
+
+// 重新匹配：回到配置区
+function matchRematch(){
+  document.getElementById('matchPreviewPanel').style.display = 'none';
+  document.getElementById('matchUnmatchedPanel').style.display = 'none';
+  document.getElementById('matchConfigPanel').style.display = 'block';
+  document.getElementById('matchJobBar').style.display = 'none';
+  matchSetMsg('matchRunMsg', '');
+  matchSetMsg('matchExportMsg', '');
+}
+
+// 导出未匹配清单：前端生成 CSV（带 UTF-8 BOM，Excel 可直接打开中文）
+function matchExportUnmatched(){
+  const r = matchState.result;
+  if(!r || !r.unmatched || !r.unmatched.length){ alert('没有未匹配行'); return; }
+  const rows = [['行号','支出金额','原因']];
+  for(const u of r.unmatched){
+    rows.push([u.row_idx, u.amount||'', u.reason||'']);
+  }
+  const csv = rows.map(row => row.map(cell => {
+    const s = String(cell);
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  }).join(',')).join('\n');
+  // BOM 让 Excel 正确识别 UTF-8 中文
+  const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '未匹配清单.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
 
 /* ======================================================== 启动 */
 loadSelectors();

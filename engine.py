@@ -823,6 +823,67 @@ def extract_fields_by_layout(pdf_path):
             if "city" in result:
                 break
 
+        # —— 备注：找"备注"标签附近的文本 ——
+        # 备注可能形如"备注:XXX"/"备注：XXX"（标签和内容在同一块），
+        # 也可能"备注"单独成块、内容在其下方或右侧。
+        # 部分全电发票"备"和"注"竖排被切成两个块，需要合并识别。
+        remark_label = None  # 备注"标签块"（或合并后的"注"块位置）
+        for b in blocks:
+            txt = b["text"].strip()
+            if "备注" not in txt:
+                continue
+            # 情况1：标签和内容在同一块（如"备注:20260710晟联数码"）
+            m = re.match(r"备注\s*[:：]\s*(.+)", txt)
+            if m and m.group(1).strip():
+                result["remark"] = m.group(1).strip()[:500]
+                break
+            # 情况2：纯"备注"标签块（含冒号也接受），向下/向右找内容块
+            if len(txt) <= 4:
+                remark_label = b
+                break
+
+        # 情况3：未找到完整"备注"块时，尝试"备"+"注"竖排分块合并
+        if "remark" not in result and remark_label is None:
+            for bei in blocks:
+                if bei["text"].strip() != "备":
+                    continue
+                # 找"备"正下方 x 相近的"注"块（竖排标签）
+                zhu = next((o for o in blocks
+                            if o is not bei
+                            and o["text"].strip() == "注"
+                            and o["cy"] > bei["cy"]
+                            and abs(o["cx"] - bei["cx"]) < 10), None)
+                if zhu:
+                    remark_label = zhu  # 以"注"块作为备注区域起点
+                    break
+
+        # 若定位到备注标签，提取其下方/右侧的文本作为备注内容
+        if "remark" not in result and remark_label is not None:
+            remark_y = remark_label["cy"]
+            remark_x = remark_label["cx"]
+            # 排除发票其它字段的标签词，避免把"开票人"等误识别为备注
+            label_words = ("开票人", "收款人", "复核人", "销货方", "销售方",
+                           "购买方", "价税合计", "合计", "应税劳务",
+                           "规格型号", "单价", "数量", "密码区")
+            # 标记需排除的块：含标签词的块 + 与其同行右侧的块（标签的值）
+            excluded = set()
+            for o in blocks:
+                if any(w in o["text"] for w in label_words):
+                    excluded.add(id(o))
+                    for v in blocks:
+                        if v is o:
+                            continue
+                        if abs(v["cy"] - o["cy"]) < 8 and v["cx"] > o["cx"]:
+                            excluded.add(id(v))
+            below = [other for other in blocks
+                     if other is not remark_label
+                     and id(other) not in excluded
+                     and other["cy"] > remark_y
+                     and abs(other["cx"] - remark_x) < page_w * 0.5]
+            below.sort(key=lambda o: o["cy"])
+            if below:
+                result["remark"] = " ".join(o["text"].strip() for o in below)[:500]
+
         return result
     finally:
         # doc 必须存活到上面所有 page.rect 访问结束后再关闭，否则 page 会被 detach 报 "page is None"
@@ -903,6 +964,7 @@ def parse_pdf_to_invoice(pdf_path, account_id, email_id=None, source_type="attac
         "city": info.get("city", ""),
         "pdf_path": rel,
         "source_type": source_type,
+        "remark": info.get("remark", ""),
         "note": "" if info.get("invoice_no") else "未识别到发票号",
     }
     # 文件名是发票格式（dzfp_…）时，用文件名里的发票号/销售方/日期兜底补全
@@ -1275,13 +1337,13 @@ def _invoice_update_payload(existing, inv):
     """根据现有发票行与新解析结果，算出入库更新字段（PDF / OFD 两处复用）。
 
     规则：
-      - 业务字段（buyer/seller/amount/invoice_date/city/note）只更新非空值；
+      - 业务字段（buyer/seller/amount/invoice_date/city/note/remark）只更新非空值；
       - 文件/格式「择优选」：新候选格式不优于已存 → 保留原 PDF/OFD 文件与格式，**绝不降级**
         （例如 OFD 撞上已存的 PDF，只补业务字段，不动 pdf_path/source_type）；
         新候选格式更优或同级（PDF 优先于 OFD）→ 采纳其文件与格式。
       - 成功解析（note 为空）时清掉上一轮「来自文件名/标题」占位说明，避免误导。"""
     payload = {}
-    for k in ("buyer", "seller", "amount", "invoice_date", "city", "note"):
+    for k in ("buyer", "seller", "amount", "invoice_date", "city", "note", "remark"):
         v = inv.get(k)
         if v not in (None, ""):
             payload[k] = v
@@ -1655,7 +1717,7 @@ def reparse_all_pdfs():
             continue
         # 比较需要更新的字段
         fields_to_update = {}
-        for key in ("buyer", "seller", "amount", "invoice_no", "invoice_date", "city", "note"):
+        for key in ("buyer", "seller", "amount", "invoice_no", "invoice_date", "city", "note", "remark"):
             old_val = inv.get(key) or ""
             new_val = new_inv.get(key) or ""
             if str(old_val) != str(new_val):

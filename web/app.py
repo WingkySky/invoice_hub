@@ -30,6 +30,7 @@ if HERE not in sys.path:
 import db
 import engine
 import api
+import matching
 
 INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 
@@ -41,9 +42,21 @@ UPLOAD_ACC_EMAIL = "upload@local"
 # 导出 zip 临时目录（后台导出任务把 zip 落到这里，下载后清理）
 EXPORT_DIR = os.path.join(db.DATA_DIR, "exports")
 
+# 模板匹配：上传文件和结果的临时缓存（file_id -> {template_bytes, template_info, columns_map, result}）
+MATCH_FILES = {}
+_MATCH_LOCK = threading.Lock()
+MATCH_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "standard_template.xlsx")
+
+
+def _json_default(o):
+    """JSON 序列化兜底：把 datetime/date 转 ISO 字符串（template_info.rows[].date 等）。"""
+    if isinstance(o, (dt.datetime, dt.date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
 
 def _json(handler, obj, status=200):
-    body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(obj, ensure_ascii=False, default=_json_default).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
@@ -235,11 +248,11 @@ class Handler(BaseHTTPRequestHandler):
         # 否则含中文名会触发 UnicodeEncodeError 直接 500。
         if attachment_name:
             asc = attachment_name.encode("ascii", "ignore").decode() or "download"
-            self.send_header(
-                "Content-Disposition",
-                f"attachment; filename=\"{asc}\"; "
-                f"filename*=UTF-8''{quote(attachment_name)}",
-            )
+            # RFC 5987: filename*=UTF-8''<percent-encoded>
+            # 注意 f-string 中相邻单引号会被解析为空串拼接，需用变量避免
+            quoted = quote(attachment_name)
+            disposition = "attachment; filename=\"" + asc + "\"; filename*=UTF-8''" + quoted
+            self.send_header("Content-Disposition", disposition)
         self.end_headers()
         self.wfile.write(data)
 
@@ -333,11 +346,32 @@ class Handler(BaseHTTPRequestHandler):
             if not j or not j.get("result") or not os.path.isfile(j["result"]):
                 self.send_error(404)
                 return
-            self._send_file(j["result"], "application/zip", j.get("result_name") or "export.zip")
+            # 根据文件扩展名判断 Content-Type：match_export 产出 xlsx，其余为 zip
+            ctype = "application/zip"
+            if j.get("result", "").endswith(".xlsx"):
+                ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            self._send_file(j["result"], ctype, j.get("result_name") or "download")
             try:
                 os.remove(j["result"])
             except OSError:
                 pass
+            return
+
+        # 模板匹配：下载标准模板
+        if path == "/api/match/template/download":
+            self._send_file(MATCH_TEMPLATE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "标准模板.xlsx")
+            return
+
+        # 模板匹配：查询匹配结果
+        m = re.match(r"^/api/match/result/([0-9a-f]{12})$", path)
+        if m:
+            fid = m.group(1)
+            with _MATCH_LOCK:
+                f = MATCH_FILES.get(fid)
+            if not f:
+                self.send_error(404)
+                return
+            _json(self, f.get("result") or {"ok": False, "msg": "尚未匹配"})
             return
 
         if path.startswith("/api/pdf/"):
@@ -508,6 +542,103 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/export":
             ids = payload.get("ids", [])
             jid = start_job("export", _run_export, ids, total=len(ids))
+            _json(self, {"ok": True, "job_id": jid})
+            return
+
+        # 模板匹配：上传 xlsx 文件，解析模板结构（列映射、行数据、ambiguous 标记）
+        if path == "/api/match/upload":
+            import base64
+            b64 = payload.get("b64", "")
+            try:
+                file_bytes = base64.b64decode(b64)
+            except Exception:
+                _json(self, {"ok": False, "msg": "文件解码失败"})
+                return
+            try:
+                info = matching.parse_template(file_bytes)
+            except Exception as e:
+                _json(self, {"ok": False, "msg": f"解析失败：{type(e).__name__}: {e}"})
+                return
+            fid = uuid.uuid4().hex[:12]
+            with _MATCH_LOCK:
+                MATCH_FILES[fid] = {"template_bytes": file_bytes, "template_info": info, "columns_map": info.get("columns"), "result": None, "original_name": payload.get("name", "")}
+            _json(self, {"ok": True, "file_id": fid, "template_info": info})
+            return
+
+        # 模板匹配：用户确认列映射
+        if path == "/api/match/columns":
+            fid = payload.get("file_id")
+            columns_map = payload.get("columns_map")
+            with _MATCH_LOCK:
+                f = MATCH_FILES.get(fid)
+            if not f:
+                _json(self, {"ok": False, "msg": "文件不存在，请重新上传"})
+                return
+            with _MATCH_LOCK:
+                MATCH_FILES[fid]["columns_map"] = columns_map
+            _json(self, {"ok": True, "file_id": fid})
+            return
+
+        # 模板匹配：启动匹配后台任务
+        if path == "/api/match/run":
+            fid = payload.get("file_id")
+            date_range_days = int(payload.get("date_range_days", 30))
+            overwrite = bool(payload.get("overwrite", False))
+            with _MATCH_LOCK:
+                f = MATCH_FILES.get(fid)
+            if not f:
+                _json(self, {"ok": False, "msg": "文件不存在，请重新上传"})
+                return
+            def _match_job(report, fid, date_range_days, overwrite):
+                with _MATCH_LOCK:
+                    f = MATCH_FILES.get(fid)
+                if not f:
+                    return
+                template_bytes = f["template_bytes"]
+                columns_map = f["columns_map"]
+                try:
+                    result = matching.run_match(template_bytes, columns_map, None, date_range_days, overwrite)
+                    with _MATCH_LOCK:
+                        MATCH_FILES[fid]["result"] = result
+                    report(msg="匹配完成")
+                except Exception as e:
+                    report(msg=f"匹配失败：{type(e).__name__}: {e}")
+                    raise
+            jid = start_job("match", _match_job, fid, date_range_days, overwrite)
+            _json(self, {"ok": True, "job_id": jid, "file_id": fid})
+            return
+
+        # 模板匹配：生成回填 xlsx（后台任务，复用 /api/jobs/<id>/download 下载）
+        if path == "/api/match/export":
+            fid = payload.get("file_id")
+            confirmed = payload.get("confirmed_matched", [])  # [{"row_idx": int, "invoice_no": str}, ...]
+            with _MATCH_LOCK:
+                f = MATCH_FILES.get(fid)
+            if not f:
+                _json(self, {"ok": False, "msg": "文件不存在"})
+                return
+            def _export_match_job(report, fid, confirmed):
+                with _MATCH_LOCK:
+                    f = MATCH_FILES.get(fid)
+                if not f:
+                    return
+                template_bytes = f["template_bytes"]
+                columns_map = f["columns_map"]
+                xlsx_bytes = matching.generate_filled_xlsx(template_bytes, columns_map, confirmed)
+                os.makedirs(EXPORT_DIR, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(prefix="match_", suffix=".xlsx", dir=EXPORT_DIR)
+                os.close(fd)
+                with open(tmp, "wb") as fh:
+                    fh.write(xlsx_bytes)
+                # 默认文件名：原文件名去掉 .xlsx 后缀 + "_已回填.xlsx"
+                orig = f.get("original_name", "") or "模板"
+                if orig.lower().endswith(".xlsx"):
+                    orig = orig[:-5]
+                elif orig.lower().endswith(".xls"):
+                    orig = orig[:-4]
+                report.result(tmp, orig + "_已回填.xlsx")
+                report(msg="已生成回填文件")
+            jid = start_job("match_export", _export_match_job, fid, confirmed)
             _json(self, {"ok": True, "job_id": jid})
             return
 

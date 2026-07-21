@@ -12,3 +12,6 @@ config/tencent.json
 .DS_Store
 .agnes/
 .workbuddy/
+
+# 示例/样本数据（不上传）
+sample/
