@@ -69,7 +69,7 @@ def _json(handler, obj, status=200):
 
 def _parse_filters(qs):
     f = {}
-    for k in ("account_id", "buyer", "city", "invoice_no", "date_from", "date_to", "keyword"):
+    for k in ("account_id", "buyer", "seller", "city", "invoice_no", "date_from", "date_to", "keyword"):
         if qs.get(k):
             f[k] = qs[k][0]
     if f.get("account_id"):
@@ -202,8 +202,8 @@ def _run_upload(report, files):
     report(total, total, f"已导入 {added}/{total} 个")
 
 
-def _run_export(report, ids):
-    path = _build_export_zip(ids, report)
+def _run_export(report, ids, group_by=None):
+    path = _build_export_zip(ids, report, group_by=group_by)
     if not path:
         raise ValueError("没有可导出的发票")
     report.result(path, "发票打包.zip")
@@ -308,6 +308,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/buyers":
             _json(self, db.distinct_buyers())
+            return
+
+        if path == "/api/sellers":
+            _json(self, db.distinct_sellers())
             return
 
         if path == "/api/stats":
@@ -541,7 +545,8 @@ class Handler(BaseHTTPRequestHandler):
         # 勾选/全选 → 打包 PDF + 清单导出（后台构建 zip，完成后前端按 job 下载，避免大批量阻塞）
         if path == "/api/export":
             ids = payload.get("ids", [])
-            jid = start_job("export", _run_export, ids, total=len(ids))
+            group_by = payload.get("group_by") or None
+            jid = start_job("export", _run_export, ids, group_by, total=len(ids))
             _json(self, {"ok": True, "job_id": jid})
             return
 
@@ -659,10 +664,19 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def _build_export_zip(ids, report):
+def _build_export_zip(ids, report, group_by=None):
     """构建导出 zip（PDF 打包 + csv/md/xlsx 清单）写入临时文件，返回文件路径；
     无可选导出时返回 None。report(done,total,msg) 用于回报进度，
-    避免在请求线程里同步阻塞大批量导出。清单生成逻辑与原版完全一致。"""
+    避免在请求线程里同步阻塞大批量导出。
+
+    group_by 控制 zip 内 PDF 的目录组织方式：
+      - None / 'none'      : 全部平铺到 pdfs/ 下（默认，向后兼容）
+      - 'buyer'            : 按购买方分文件夹 pdfs/<买方>/
+      - 'seller'           : 按销售方分文件夹 pdfs/<销售方>/
+      - 'seller_buyer'     : 先销售方再买方 pdfs/<销售方>/<买方>/
+      - 'buyer_seller'     : 先买方再销售方 pdfs/<买方>/<销售方>/
+    缺失字段统一回退为"(未知)"，避免空目录名。
+    """
     rows = db.get_invoices_by_ids(ids)
     if not rows:
         return None
@@ -672,6 +686,27 @@ def _build_export_zip(ids, report):
     total = len(rows)
     zf = zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED)
     used = {}
+
+    def _safe_seg(s):
+        """清洗目录/文件名片段：去掉非法字符并截断。"""
+        return re.sub(r'[\\/:*?"<>|]+', "_", s or "").strip()[:80] or "(未知)"
+
+    def _group_dir(r):
+        """根据 group_by 计算该发票在 zip 内的子目录路径（相对于 pdfs/）。"""
+        if not group_by or group_by == "none":
+            return ""
+        buyer = r.get("buyer") or "(未知)"
+        seller = r.get("seller") or "(未知)"
+        if group_by == "buyer":
+            return _safe_seg(buyer)
+        if group_by == "seller":
+            return _safe_seg(seller)
+        if group_by == "seller_buyer":
+            return os.path.join(_safe_seg(seller), _safe_seg(buyer))
+        if group_by == "buyer_seller":
+            return os.path.join(_safe_seg(buyer), _safe_seg(seller))
+        return ""
+
     for i, r in enumerate(rows, 1):
         pdf_abs = os.path.join(db.HERE, r.get("pdf_path") or "")
         if os.path.isfile(pdf_abs):
@@ -681,7 +716,11 @@ def _build_export_zip(ids, report):
             if fname in used:
                 fname = f"{base}_{used[fname]}.pdf"
                 used[fname.rsplit('.',1)[0]] = used.get(fname.rsplit('.',1)[0],0)+1
-            zf.write(pdf_abs, os.path.join("pdfs", fname))
+            else:
+                used[fname] = 1
+            sub = _group_dir(r)
+            arcname = os.path.join("pdfs", sub, fname) if sub else os.path.join("pdfs", fname)
+            zf.write(pdf_abs, arcname)
         # 每 50 张回报一次进度，避免大量 PDF 时前端无反馈
         if i % 50 == 0 or i == total:
             if report:

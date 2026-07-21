@@ -416,18 +416,26 @@ def _apply_filters(sql, filters, params):
     if filters.get("buyer"):
         sql += " AND i.buyer LIKE ?"
         params.append(f"%{filters['buyer']}%")
+    if filters.get("seller"):
+        sql += " AND i.seller LIKE ?"
+        params.append(f"%{filters['seller']}%")
     if filters.get("city"):
         sql += " AND i.city=?"
         params.append(filters["city"])
     if filters.get("invoice_no"):
         sql += " AND i.invoice_no LIKE ?"
         params.append(f"%{filters['invoice_no']}%")
-    if filters.get("date_from"):
-        sql += " AND i.invoice_date >= ?"
-        params.append(filters["date_from"])
-    if filters.get("date_to"):
-        sql += " AND i.invoice_date <= ?"
-        params.append(filters["date_to"])
+    if filters.get("date_from") or filters.get("date_to"):
+        # 库内 invoice_date 可能是中文格式（如"2026年07月10日"），也可能是 ISO 格式。
+        # 直接字符串比较会让中文格式全部失配（"2026年07月10日" >= "2026-07-01" 为假），
+        # 因此先把"年/月/日"替换成"-"再比较；纯 ISO 格式无中文字符，replace 后保持不变。
+        norm = "replace(replace(replace(i.invoice_date, '年', '-'), '月', '-'), '日', '')"
+        if filters.get("date_from"):
+            sql += f" AND {norm} >= ?"
+            params.append(filters["date_from"])
+        if filters.get("date_to"):
+            sql += f" AND {norm} <= ?"
+            params.append(filters["date_to"])
     if filters.get("keyword"):
         kw = f"%{filters['keyword']}%"
         sql += " AND (i.buyer LIKE ? OR i.seller LIKE ? OR i.invoice_no LIKE ? OR i.city LIKE ?)"
@@ -504,6 +512,14 @@ def distinct_buyers():
     rows = c.execute("SELECT DISTINCT buyer FROM invoices WHERE buyer IS NOT NULL AND buyer<>'' ORDER BY buyer").fetchall()
     c.close()
     return [r["buyer"] for r in rows]
+
+
+def distinct_sellers():
+    """返回所有非空销售方列表（用于前端筛选下拉框）。"""
+    c = conn()
+    rows = c.execute("SELECT DISTINCT seller FROM invoices WHERE seller IS NOT NULL AND seller<>'' ORDER BY seller").fetchall()
+    c.close()
+    return [r["seller"] for r in rows]
 
 def get_invoices_by_ids(ids):
     """按 id 列表取发票（导出打包用）。"""

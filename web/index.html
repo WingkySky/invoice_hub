@@ -201,6 +201,7 @@
         <select id="f_account" class="grow"><option value="">全部邮箱</option></select>
         <select id="f_city" class="grow"><option value="">全部城市</option></select>
         <select id="f_buyer" class="grow"><option value="">全部买方</option></select>
+        <select id="f_seller" class="grow"><option value="">全部销售方</option></select>
         <input type="date" id="f_from" title="开始日期">
         <input type="date" id="f_to" title="结束日期">
         <button onclick="resetPageAndLoad()">
@@ -536,6 +537,31 @@
   </div>
 </div>
 
+<!-- ========== 导出选项弹窗 ========== -->
+<div class="mask" id="exportMask">
+  <div class="modal">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      导出选项
+    </h3>
+    <label>PDF 文件夹组织方式</label>
+    <select id="exportGroupBy" class="grow" style="width:100%">
+      <option value="none">不分组（全部平铺到 pdfs/ 下）</option>
+      <option value="buyer">按购买方分文件夹</option>
+      <option value="seller">按销售方分文件夹</option>
+      <option value="seller_buyer">先销售方后买方（销售方/买方/）</option>
+      <option value="buyer_seller">先买方后销售方（买方/销售方/）</option>
+    </select>
+    <p style="color:var(--muted);font-size:12px;margin-top:8px;line-height:1.6">
+      勾选的发票 PDF 会按所选方式归入对应子文件夹；清单（csv/md/xlsx）始终放在 zip 根目录。缺失买方或销售方的发票归入「(未知)」文件夹。
+    </p>
+    <div class="acts">
+      <button class="ghost" onclick="closeExportModal()">取消</button>
+      <button onclick="confirmExport()">开始导出</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ======================================================== 通用 */
 let editingIsUpload = false;  // 当前编辑的账号是否为本地上传虚拟账号（保护 email 不被改、跳过邮箱校验）
@@ -611,12 +637,13 @@ function currentFilters(){
     account_id: document.getElementById('f_account').value,
     city: document.getElementById('f_city').value,
     buyer: document.getElementById('f_buyer').value,
+    seller: document.getElementById('f_seller').value,
     date_from: document.getElementById('f_from').value,
     date_to: document.getElementById('f_to').value,
   };
 }
 function resetFilters(){
-  ['f_keyword','f_account','f_city','f_buyer','f_from','f_to'].forEach(id=>document.getElementById(id).value='');
+  ['f_keyword','f_account','f_city','f_buyer','f_seller','f_from','f_to'].forEach(id=>document.getElementById(id).value='');
   _cachedRows = [];  // 清除缓存，强制重新加载
   _cachedTotal = 0;
   _cachedStats = null;  // 筛选重置：统计缓存一并失效，避免回退到不匹配旧筛选的快照
@@ -884,20 +911,23 @@ function formatSince(s){
 
 /* ======================================================== 下拉选项 + 账号列表 */
 async function loadSelectors(){
-  const [accs, cities, buyers] = await Promise.all([
-    API('/api/accounts'), API('/api/cities'), API('/api/buyers')]);
+  const [accs, cities, buyers, sellers] = await Promise.all([
+    API('/api/accounts'), API('/api/cities'), API('/api/buyers'), API('/api/sellers')]);
   // 重写下拉框前，先记录用户当前选中的过滤器值。
   // 原因：直接 innerHTML=... 会清空 <select> 的 value（重置为第一个 option），
   // 导致抓取完成时 load() 拿到旧过滤器、loadStats() 拿到空过滤器，统计与列表不一致。
   const prevAccount = document.getElementById('f_account').value;
   const prevCity = document.getElementById('f_city').value;
   const prevBuyer = document.getElementById('f_buyer').value;
+  const prevSeller = document.getElementById('f_seller').value;
   document.getElementById('f_account').innerHTML =
     '<option value="">全部邮箱</option>' + accs.map(a=>`<option value="${a.id}">${escapeHtml(a.name)} (${escapeHtml(a.email)})</option>`).join('');
   document.getElementById('f_city').innerHTML =
     '<option value="">全部城市</option>' + cities.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
   document.getElementById('f_buyer').innerHTML =
     '<option value="">全部买方</option>' + buyers.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+  document.getElementById('f_seller').innerHTML =
+    '<option value="">全部销售方</option>' + sellers.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   // 恢复用户选中的过滤器值（仅当该值仍在新选项列表中存在时；已被删除的选项不恢复，避免悬空 value 触发空结果）
   if(prevAccount && accs.some(a=>String(a.id)===prevAccount)){
     document.getElementById('f_account').value = prevAccount;
@@ -907,6 +937,9 @@ async function loadSelectors(){
   }
   if(prevBuyer && buyers.includes(prevBuyer)){
     document.getElementById('f_buyer').value = prevBuyer;
+  }
+  if(prevSeller && sellers.includes(prevSeller)){
+    document.getElementById('f_seller').value = prevSeller;
   }
   renderAccounts(accs);
   const st = await API('/api/fetch/status');
@@ -1201,11 +1234,25 @@ async function uploadFiles(input){
 }
 
 /* ======================================================== 导出 */
-async function exportSelected(){
+// 导出改为先弹窗选择文件夹组织方式，再发起后台打包任务
+let _pendingExportIds = [];
+function exportSelected(){
   const ids = Array.from(selectedIds);
   if(!ids.length){ alert('请先勾选要导出的发票（可跨页勾选）'); return; }
+  _pendingExportIds = ids;
+  document.getElementById('exportMask').classList.add('show');
+}
+function closeExportModal(){
+  document.getElementById('exportMask').classList.remove('show');
+  _pendingExportIds = [];
+}
+async function confirmExport(){
+  const ids = _pendingExportIds;
+  if(!ids.length){ closeExportModal(); return; }
+  const group_by = document.getElementById('exportGroupBy').value || 'none';
+  closeExportModal();
   showJobBar();
-  const r = await API('/api/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  const r = await API('/api/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, group_by})});
   if(!(r.ok && r.job_id)){ hideJobBar(); setExp('导出失败'); return; }
   // 后台构建 zip：轮询进度，完成后自动触发下载（不再阻塞请求线程）
   await pollJob(r.job_id,
