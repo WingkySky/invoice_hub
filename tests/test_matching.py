@@ -61,10 +61,10 @@ class ParseTemplateTest(unittest.TestCase):
         headers = ["发放日期", "所属部门", "商社", "收款单位", "支出金额",
                    "平台", "渠道", "平台开票号"]
         rows = [
-            [datetime(2026, 6, 30), "外包A部", "晟联数码", "南沙友谊", 36925.01,
-             "身边云", "博跃", "26122000000877888861"],
-            [datetime(2026, 7, 10), "外包B部", "另一商社", "南沙友谊", 949.50,
-             "身边云", "博跃", None],
+            [datetime(2026, 6, 30), "外包A部", "华为技术", "字节跳动", 36925.01,
+             "阿里云", "腾讯云", "26122000000877888861"],
+            [datetime(2026, 7, 10), "外包B部", "另一商社", "字节跳动", 949.50,
+             "阿里云", "腾讯云", None],
         ]
         info = parse_template(_make_xlsx(headers, rows))
 
@@ -80,8 +80,8 @@ class ParseTemplateTest(unittest.TestCase):
 
         r0 = info["rows"][0]
         self.assertEqual(r0["row_idx"], 2)  # 1-based，含表头
-        self.assertEqual(r0["buyer"], "南沙友谊")
-        self.assertEqual(r0["merchant"], "晟联数码")
+        self.assertEqual(r0["buyer"], "字节跳动")
+        self.assertEqual(r0["merchant"], "华为技术")
         self.assertEqual(r0["amount"], 36925.01)
         self.assertIsNotNone(r0["existing_invoice_no"])
         self.assertEqual(r0["date"], datetime(2026, 6, 30))
@@ -123,12 +123,12 @@ class MatchOneToOneTest(unittest.TestCase):
 
     def test_multi_candidate_remark_scoring(self):
         """多候选时用备注打分（日期+2、商社+1）选最优。"""
-        rows = [{"row_idx": 2, "date": datetime(2026, 6, 30), "merchant": "晟联数码",
-                 "buyer": "南沙友谊", "amount": 36925.01, "existing_invoice_no": None}]
+        rows = [{"row_idx": 2, "date": datetime(2026, 6, 30), "merchant": "华为技术",
+                 "buyer": "字节跳动", "amount": 36925.01, "existing_invoice_no": None}]
         candidates = [
-            _inv(1, "南沙友谊", 36925.01, "INV_A", "2026-06-30",
-                 remark="发放日期20260630 晟联数码"),
-            _inv(2, "南沙友谊", 36925.01, "INV_B", "2026-06-30",
+            _inv(1, "字节跳动", 36925.01, "INV_A", "2026-06-30",
+                 remark="发放日期20260630 华为技术"),
+            _inv(2, "字节跳动", 36925.01, "INV_B", "2026-06-30",
                  remark="其他内容"),
         ]
         matched = match_one_to_one(rows, candidates, MatchConfig())

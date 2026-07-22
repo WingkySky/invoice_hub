@@ -148,11 +148,11 @@ class ParseInvoiceFilenameTest(unittest.TestCase):
     """电子发票文件名格式（dzfp_...）常见于标题即附件文件名的系统邮件。"""
 
     def test_dzfp_pattern(self):
-        subject = "dzfp_26442000008130218281_安徽邦信置业有限公司_20260717085020 - huanglanzhi@ifesco.cn"
+        subject = "dzfp_26442000008130218281_字节跳动科技有限公司_20260717085020 - test@example.cn"
         inv = engine.parse_invoice_filename(subject, account_id=1, email_id=2)
         self.assertIsNotNone(inv)
         self.assertEqual(inv["invoice_no"], "26442000008130218281")
-        self.assertEqual(inv["seller"], "安徽邦信置业有限公司")
+        self.assertEqual(inv["seller"], "字节跳动科技有限公司")
         self.assertEqual(inv["invoice_date"], "2026年07月17日")
         self.assertEqual(inv["source_type"], "subject")
 
@@ -323,12 +323,12 @@ class FormatPriorityTest(unittest.TestCase):
     def test_find_sibling_pdf(self):
         d = tempfile.mkdtemp()
         # 同号 PDF 应被找到
-        open(os.path.join(d, "34894_7_dzfp_26442000008130218281_安徽邦信.pdf"), "w").close()
+        open(os.path.join(d, "34894_7_dzfp_26442000008130218281_字节跳动.pdf"), "w").close()
         # 其它号 PDF 不应被「子串误匹配」误命中
         open(os.path.join(d, "264420000081302182810.pdf"), "w").close()
         got = engine._find_sibling_pdf(d, "26442000008130218281")
         self.assertIsNotNone(got)
-        self.assertTrue(got.endswith("26442000008130218281_安徽邦信.pdf"))
+        self.assertTrue(got.endswith("26442000008130218281_字节跳动.pdf"))
         # 不存在同号时返回 None
         self.assertIsNone(engine._find_sibling_pdf(d, "99999999999999999999"))
 

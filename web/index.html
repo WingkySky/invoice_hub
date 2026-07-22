@@ -422,6 +422,17 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           下载回填文件
         </button>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)">
+          <input type="checkbox" id="matchAlsoPdf" onchange="matchTogglePdfOption()">
+          同时打包发票 PDF
+        </label>
+        <select id="matchPdfGroupBy" class="grow" style="max-width:260px;display:none">
+          <option value="none">不分组（全部平铺到 pdfs/ 下）</option>
+          <option value="buyer">按购买方分文件夹</option>
+          <option value="seller">按销售方分文件夹</option>
+          <option value="seller_buyer">先销售方后买方（销售方/买方/）</option>
+          <option value="buyer_seller">先买方后销售方（买方/销售方/）</option>
+        </select>
         <button class="ghost" onclick="matchRematch()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           重新匹配
@@ -1332,7 +1343,7 @@ async function reconcile(dry){
 document.getElementById('f_keyword').addEventListener('keydown', e=>{ if(e.key==='Enter') resetPageAndLoad(); });
 
 /* ======================================================== 模板匹配 Tab */
-// 状态：file_id（后端返回）、template_info（上传后概要）、result（匹配结果）、matchedSelected（勾选的回填项 row_idx -> invoice_no）
+// 状态：file_id（后端返回）、template_info（上传后概要）、result（匹配结果）、matchedSelected（勾选的回填项 row_idx -> {invoice_no, invoice_id}）
 const matchState = {
   fileId: null,
   templateInfo: null,
@@ -1557,7 +1568,7 @@ function matchRenderResult(r){
   // 默认勾选所有 matched
   matchState.matchedSelected = new Map();
   for(const m of matched){
-    matchState.matchedSelected.set(m.row_idx, m.invoice_no);
+    matchState.matchedSelected.set(m.row_idx, { invoice_no: m.invoice_no, invoice_id: m.invoice_id });
   }
 
   const matchedByRow = new Map();
@@ -1656,21 +1667,59 @@ function matchRenderResult(r){
 function matchToggleRow(box, rowIdx){
   if(box.checked){
     const m = matchState.result.matched.find(x=>x.row_idx===rowIdx);
-    if(m) matchState.matchedSelected.set(rowIdx, m.invoice_no);
+    if(m) matchState.matchedSelected.set(rowIdx, { invoice_no: m.invoice_no, invoice_id: m.invoice_id });
   } else {
     matchState.matchedSelected.delete(rowIdx);
   }
 }
 
-// 下载回填文件：POST /api/match/export → 轮询 job → 下载
+// 切换"同时打包发票 PDF"勾选时显示/隐藏文件夹组织下拉
+function matchTogglePdfOption(){
+  const checked = document.getElementById('matchAlsoPdf').checked;
+  document.getElementById('matchPdfGroupBy').style.display = checked ? '' : 'none';
+}
+
+// 从 Content-Disposition 解析下载文件名
+function _parseDownloadName(resp, fallback){
+  const cd = resp.headers.get('Content-Disposition') || '';
+  const mStar = cd.match(/filename\*=UTF-8''([^";]+)/i);
+  const mPlain = cd.match(/filename=["']?([^"';]+)/i);
+  if(mStar){
+    try{ return decodeURIComponent(mStar[1]); }
+    catch(e){ return mStar[1]; }
+  }
+  if(mPlain){ return mPlain[1]; }
+  return fallback;
+}
+
+// 触发浏览器下载一个已完成的 job 产物
+async function _downloadJobResult(jobId, fallbackName){
+  const resp = await fetch('/api/jobs/'+jobId+'/download');
+  if(!resp.ok){ throw new Error('下载失败'); }
+  const blob = await resp.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = _parseDownloadName(resp, fallbackName);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+
+// 下载回填文件（可选同时打包发票 PDF）
 async function matchDownloadExport(){
   if(!matchState.fileId){ alert('请先完成匹配'); return; }
   const confirmed = [];
-  for(const [row_idx, invoice_no] of matchState.matchedSelected.entries()){
-    confirmed.push({ row_idx, invoice_no });
+  for(const [row_idx, info] of matchState.matchedSelected.entries()){
+    confirmed.push({ row_idx, invoice_no: info.invoice_no, invoice_id: info.invoice_id });
   }
   if(!confirmed.length){ alert('请至少勾选一条匹配项用于回填'); return; }
-  matchSetMsg('matchExportMsg', '生成中…');
+
+  const alsoPdf = document.getElementById('matchAlsoPdf').checked;
+  const group_by = document.getElementById('matchPdfGroupBy').value || 'none';
+
+  // 阶段1：下载回填 xlsx
+  matchSetMsg('matchExportMsg', '生成回填文件中…');
   try{
     const r = await API('/api/match/export', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1678,33 +1727,29 @@ async function matchDownloadExport(){
     });
     if(!r.ok || !r.job_id){ matchSetMsg('matchExportMsg', '启动失败', true); return; }
     await pollJob(r.job_id,
-      j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'生成中…')),
+      j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'生成回填文件中…')),
       async j => {
         if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
-        matchSetMsg('matchExportMsg', '生成完成，下载中…');
-        const resp = await fetch('/api/jobs/'+r.job_id+'/download');
-        if(!resp.ok){ matchSetMsg('matchExportMsg', '下载失败', true); return; }
-        const blob = await resp.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        const cd = resp.headers.get('Content-Disposition') || '';
-        // 优先取 filename*=UTF-8''（百分号编码，支持中文），再退回 filename=
-        let dlName = '回填文件.xlsx';
-        const mStar = cd.match(/filename\*=UTF-8''([^";]+)/i);
-        const mPlain = cd.match(/filename=["']?([^"';]+)/i);
-        if(mStar){
-          try{ dlName = decodeURIComponent(mStar[1]); }
-          catch(e){ dlName = mStar[1]; }
-        } else if(mPlain){
-          dlName = mPlain[1];
-        }
-        a.download = dlName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-        matchSetMsg('matchExportMsg', '已下载');
+        matchSetMsg('matchExportMsg', '回填文件下载中…');
+        await _downloadJobResult(r.job_id, '回填文件.xlsx');
       });
+    if(alsoPdf){
+      // 阶段2：打包发票 PDF
+      matchSetMsg('matchExportMsg', '打包发票 PDF 中…');
+      const r2 = await API('/api/match/export_pdfs', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed, group_by })
+      });
+      if(!r2.ok || !r2.job_id){ matchSetMsg('matchExportMsg', 'PDF 打包启动失败：'+(r2.msg||''), true); return; }
+      await pollJob(r2.job_id,
+        j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'打包发票 PDF 中…')),
+        async j => {
+          if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
+          matchSetMsg('matchExportMsg', '发票 PDF 下载中…');
+          await _downloadJobResult(r2.job_id, '发票PDF.zip');
+        });
+    }
+    matchSetMsg('matchExportMsg', '已下载');
   }catch(e){ matchSetMsg('matchExportMsg', '错误：'+e, true); }
 }
 

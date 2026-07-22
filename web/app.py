@@ -647,6 +647,45 @@ class Handler(BaseHTTPRequestHandler):
             _json(self, {"ok": True, "job_id": jid})
             return
 
+        # 模板匹配：打包匹配到的发票 PDF（后台任务，复用 _build_export_zip）
+        if path == "/api/match/export_pdfs":
+            fid = payload.get("file_id")
+            confirmed = payload.get("confirmed_matched", [])  # [{"row_idx","invoice_no","invoice_id"}, ...]
+            group_by = payload.get("group_by") or None
+            with _MATCH_LOCK:
+                f = MATCH_FILES.get(fid)
+            if not f:
+                _json(self, {"ok": False, "msg": "文件不存在"})
+                return
+            # 收集去重的 invoice_id
+            ids = []
+            seen = set()
+            for item in confirmed:
+                iid = item.get("invoice_id")
+                if iid is not None and iid not in seen:
+                    seen.add(iid)
+                    ids.append(iid)
+            if not ids:
+                _json(self, {"ok": False, "msg": "无可打包的发票"})
+                return
+            def _export_pdfs_job(report, fid, ids, group_by):
+                path = _build_export_zip(ids, report, group_by=group_by)
+                if not path:
+                    raise ValueError("没有可导出的发票")
+                # 默认文件名：原文件名去掉 .xlsx 后缀 + "_发票PDF.zip"
+                with _MATCH_LOCK:
+                    f = MATCH_FILES.get(fid)
+                orig = (f or {}).get("original_name", "") or "模板"
+                if orig.lower().endswith(".xlsx"):
+                    orig = orig[:-5]
+                elif orig.lower().endswith(".xls"):
+                    orig = orig[:-4]
+                report.result(path, orig + "_发票PDF.zip")
+                report(msg="已生成发票 PDF 打包文件")
+            jid = start_job("match_export_pdfs", _export_pdfs_job, fid, ids, group_by)
+            _json(self, {"ok": True, "job_id": jid})
+            return
+
         self.send_error(404)
 
     # ----------------------------------------------------- 导出 zip
