@@ -652,6 +652,8 @@ class Handler(BaseHTTPRequestHandler):
             fid = payload.get("file_id")
             confirmed = payload.get("confirmed_matched", [])  # [{"row_idx","invoice_no","invoice_id"}, ...]
             group_by = payload.get("group_by") or None
+            invoice_date_from = payload.get("invoice_date_from") or ""
+            invoice_date_to = payload.get("invoice_date_to") or ""
             with _MATCH_LOCK:
                 f = MATCH_FILES.get(fid)
             if not f:
@@ -668,20 +670,46 @@ class Handler(BaseHTTPRequestHandler):
             if not ids:
                 _json(self, {"ok": False, "msg": "无可打包的发票"})
                 return
+            # 按开票日期范围过滤（留空=不过滤），用于排除已导过的批次
+            if invoice_date_from or invoice_date_to:
+                rows = db.get_invoices_by_ids(ids)
+                dt_from = matching._to_datetime(invoice_date_from) if invoice_date_from else None
+                dt_to = matching._to_datetime(invoice_date_to) if invoice_date_to else None
+                filtered_ids = []
+                for r in rows:
+                    inv_dt = matching._to_datetime(r.get("invoice_date"))
+                    if inv_dt is None:
+                        continue  # 无法解析日期的跳过
+                    if dt_from and inv_dt < dt_from:
+                        continue
+                    if dt_to and inv_dt > dt_to:
+                        continue
+                    filtered_ids.append(r["id"])
+                if not filtered_ids:
+                    _json(self, {"ok": False, "msg": "指定日期范围内无可打包的发票"})
+                    return
+                ids = filtered_ids
             def _export_pdfs_job(report, fid, ids, group_by):
-                path = _build_export_zip(ids, report, group_by=group_by)
-                if not path:
-                    raise ValueError("没有可导出的发票")
-                # 默认文件名：原文件名去掉 .xlsx 后缀 + "_发票PDF.zip"
                 with _MATCH_LOCK:
                     f = MATCH_FILES.get(fid)
-                orig = (f or {}).get("original_name", "") or "模板"
+                if not f:
+                    raise ValueError("文件不存在")
+                # 1. 生成回填 xlsx 字节
+                xlsx_bytes = matching.generate_filled_xlsx(f["template_bytes"], f["columns_map"], confirmed)
+                orig = f.get("original_name", "") or "模板"
                 if orig.lower().endswith(".xlsx"):
                     orig = orig[:-5]
                 elif orig.lower().endswith(".xls"):
                     orig = orig[:-4]
-                report.result(path, orig + "_发票PDF.zip")
-                report(msg="已生成发票 PDF 打包文件")
+                # 2. 调 _build_export_zip 产出含 PDF+清单的 zip（复用台账逻辑）
+                path = _build_export_zip(ids, report, group_by=group_by)
+                if not path:
+                    raise ValueError("没有可导出的发票")
+                # 3. 把回填 xlsx 追加进 zip 根目录，一次下载
+                with zipfile.ZipFile(path, "a", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr(orig + "_已回填.xlsx", xlsx_bytes)
+                report.result(path, orig + "_打包.zip")
+                report(msg="已生成打包文件（回填文件+发票PDF+清单）")
             jid = start_job("match_export_pdfs", _export_pdfs_job, fid, ids, group_by)
             _json(self, {"ok": True, "job_id": jid})
             return

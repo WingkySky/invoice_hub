@@ -433,6 +433,13 @@
           <option value="seller_buyer">先销售方后买方（销售方/买方/）</option>
           <option value="buyer_seller">先买方后销售方（买方/销售方/）</option>
         </select>
+        <span id="matchPdfDateRange" style="display:none;font-size:12px;color:var(--muted);align-items:center;gap:4px">
+          开票日期：
+          <input type="date" id="matchInvoiceDateFrom" style="width:140px">
+          ~
+          <input type="date" id="matchInvoiceDateTo" style="width:140px">
+          <span style="color:var(--muted);font-size:11px">（留空=不过滤，用于排除已导过的批次）</span>
+        </span>
         <button class="ghost" onclick="matchRematch()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           重新匹配
@@ -474,6 +481,9 @@
         <table>
           <thead><tr>
             <th>行号</th>
+            <th>日期</th>
+            <th>商社</th>
+            <th>买方</th>
             <th>支出金额</th>
             <th>原因</th>
           </tr></thead>
@@ -605,6 +615,19 @@ function fmtMoney(v){
   const n = parseFloat(v);
   if (isNaN(n)) return v || '';
   return '¥' + n.toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+// 日期格式化：把后端 ISO 字符串（含 T00:00:00）或日期对象截成 YYYY-MM-DD；
+// 原模板的日期本来就只有"日"精度，不应显示时钟部分导致页面过长。
+function fmtDate(v){
+  if(!v) return '';
+  const s = String(v);
+  // 匹配 YYYY-MM-DD 或 YYYY/MM/DD 前缀（兼容 ISO 与中文格式截取前 10 位）
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if(m){
+    return m[1] + '-' + m[2].padStart(2,'0') + '-' + m[3].padStart(2,'0');
+  }
+  return s;
 }
 
 // 列表「发票文件」单元格：根据 pdf_path 后缀决定展示与行为，保证「列表所见」与「能打开」一一对应：
@@ -1640,7 +1663,7 @@ function matchRenderResult(r){
     return `<tr style="${bg}">
       <td class="checkbox-cell">${chk}</td>
       <td>${row.row_idx}</td>
-      <td>${escapeHtml(row.date||'')}</td>
+      <td>${escapeHtml(fmtDate(row.date))}</td>
       <td>${escapeHtml(row.merchant||'')}</td>
       <td>${escapeHtml(row.buyer||'')}</td>
       <td class="num">${fmtMoney(row.amount)}</td>
@@ -1650,12 +1673,25 @@ function matchRenderResult(r){
     </tr>`;
   }).join('');
 
-  // 未匹配清单
+  // 未匹配清单：保留原模板记录的日期/商社/买方信息，让人能看出是哪条记录没匹配出来
   if(unmatched.length){
     document.getElementById('matchUnmatchedPanel').style.display = 'block';
     document.getElementById('matchUnmatchedCnt').textContent = `共 ${unmatched.length} 条`;
-    document.getElementById('matchUnmatchedTbody').innerHTML = unmatched.map(u=>
-      `<tr><td>${u.row_idx}</td><td class="num">${fmtMoney(u.amount)}</td><td>${escapeHtml(u.reason||'')}</td></tr>`).join('');
+    // 从 templateInfo.rows 按 row_idx 查原记录信息（后端 unmatched 只回 row_idx/amount/reason）
+    const tplRows = (matchState.templateInfo && matchState.templateInfo.rows) || [];
+    const tplByRow = new Map();
+    for(const tr of tplRows) tplByRow.set(tr.row_idx, tr);
+    document.getElementById('matchUnmatchedTbody').innerHTML = unmatched.map(u=>{
+      const tr = tplByRow.get(u.row_idx) || {};
+      return `<tr>
+        <td>${u.row_idx}</td>
+        <td>${escapeHtml(fmtDate(tr.date))}</td>
+        <td>${escapeHtml(tr.merchant||'')}</td>
+        <td>${escapeHtml(tr.buyer||'')}</td>
+        <td class="num">${fmtMoney(u.amount)}</td>
+        <td>${escapeHtml(u.reason||'')}</td>
+      </tr>`;
+    }).join('');
   } else {
     document.getElementById('matchUnmatchedPanel').style.display = 'none';
   }
@@ -1677,6 +1713,7 @@ function matchToggleRow(box, rowIdx){
 function matchTogglePdfOption(){
   const checked = document.getElementById('matchAlsoPdf').checked;
   document.getElementById('matchPdfGroupBy').style.display = checked ? '' : 'none';
+  document.getElementById('matchPdfDateRange').style.display = checked ? 'inline-flex' : 'none';
 }
 
 // 从 Content-Disposition 解析下载文件名
@@ -1706,7 +1743,7 @@ async function _downloadJobResult(jobId, fallbackName){
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 }
 
-// 下载回填文件（可选同时打包发票 PDF）
+// 下载回填文件（可选同时打包发票 PDF + 清单到一个 zip）
 async function matchDownloadExport(){
   if(!matchState.fileId){ alert('请先完成匹配'); return; }
   const confirmed = [];
@@ -1717,36 +1754,39 @@ async function matchDownloadExport(){
 
   const alsoPdf = document.getElementById('matchAlsoPdf').checked;
   const group_by = document.getElementById('matchPdfGroupBy').value || 'none';
+  const invoice_date_from = document.getElementById('matchInvoiceDateFrom').value || '';
+  const invoice_date_to = document.getElementById('matchInvoiceDateTo').value || '';
 
-  // 阶段1：下载回填 xlsx
-  matchSetMsg('matchExportMsg', '生成回填文件中…');
   try{
-    const r = await API('/api/match/export', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed })
-    });
-    if(!r.ok || !r.job_id){ matchSetMsg('matchExportMsg', '启动失败', true); return; }
-    await pollJob(r.job_id,
-      j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'生成回填文件中…')),
-      async j => {
-        if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
-        matchSetMsg('matchExportMsg', '回填文件下载中…');
-        await _downloadJobResult(r.job_id, '回填文件.xlsx');
-      });
     if(alsoPdf){
-      // 阶段2：打包发票 PDF
-      matchSetMsg('matchExportMsg', '打包发票 PDF 中…');
-      const r2 = await API('/api/match/export_pdfs', {
+      // 打包成一个 zip：回填 xlsx + 发票 PDF + 清单（复用台账导出逻辑）
+      matchSetMsg('matchExportMsg', '打包中（回填文件+发票PDF+清单）…');
+      const r = await API('/api/match/export_pdfs', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed, group_by })
+        body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed, group_by, invoice_date_from, invoice_date_to })
       });
-      if(!r2.ok || !r2.job_id){ matchSetMsg('matchExportMsg', 'PDF 打包启动失败：'+(r2.msg||''), true); return; }
-      await pollJob(r2.job_id,
-        j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'打包发票 PDF 中…')),
+      if(!r.ok || !r.job_id){ matchSetMsg('matchExportMsg', '启动失败：'+(r.msg||''), true); return; }
+      await pollJob(r.job_id,
+        j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'打包中…')),
         async j => {
           if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
-          matchSetMsg('matchExportMsg', '发票 PDF 下载中…');
-          await _downloadJobResult(r2.job_id, '发票PDF.zip');
+          matchSetMsg('matchExportMsg', '下载中…');
+          await _downloadJobResult(r.job_id, '回填发票打包.zip');
+        });
+    } else {
+      // 仅下载回填 xlsx
+      matchSetMsg('matchExportMsg', '生成回填文件中…');
+      const r = await API('/api/match/export', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ file_id: matchState.fileId, confirmed_matched: confirmed })
+      });
+      if(!r.ok || !r.job_id){ matchSetMsg('matchExportMsg', '启动失败', true); return; }
+      await pollJob(r.job_id,
+        j => matchSetMsg('matchExportMsg', j.error ? ('失败：'+j.error) : (j.msg||'生成回填文件中…')),
+        async j => {
+          if(j.error){ matchSetMsg('matchExportMsg', '失败：'+j.error, true); return; }
+          matchSetMsg('matchExportMsg', '下载中…');
+          await _downloadJobResult(r.job_id, '回填文件.xlsx');
         });
     }
     matchSetMsg('matchExportMsg', '已下载');
@@ -1764,12 +1804,17 @@ function matchRematch(){
 }
 
 // 导出未匹配清单：前端生成 CSV（带 UTF-8 BOM，Excel 可直接打开中文）
+// 保留原模板记录的日期/商社/买方信息，让人能看出是哪条记录没匹配出来
 function matchExportUnmatched(){
   const r = matchState.result;
   if(!r || !r.unmatched || !r.unmatched.length){ alert('没有未匹配行'); return; }
-  const rows = [['行号','支出金额','原因']];
+  const tplRows = (matchState.templateInfo && matchState.templateInfo.rows) || [];
+  const tplByRow = new Map();
+  for(const tr of tplRows) tplByRow.set(tr.row_idx, tr);
+  const rows = [['行号','日期','商社','买方','支出金额','原因']];
   for(const u of r.unmatched){
-    rows.push([u.row_idx, u.amount||'', u.reason||'']);
+    const tr = tplByRow.get(u.row_idx) || {};
+    rows.push([u.row_idx, fmtDate(tr.date), tr.merchant||'', tr.buyer||'', u.amount||'', u.reason||'']);
   }
   const csv = rows.map(row => row.map(cell => {
     const s = String(cell);
