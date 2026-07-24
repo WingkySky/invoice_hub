@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>票归集 · 发票台账</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6M9 17h6"/></svg>
+    票归集
+  </div>
+  <nav class="topnav" id="topnav"></nav>
+  <div class="who">发票归集中枢</div>
+</header>
+
+<div class="wrap">
+  <!-- 面包屑：来自公司页带参跳转时显示「公司管理 › X公司 › 发票」，上下文不丢 -->
+  <div class="crumb" id="crumb"></div>
+
+  <div class="cards" id="stats"></div>
+
+  <div class="panel filter-panel">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      筛选 / 搜索
+    </h2>
+    <div class="row">
+      <input class="grow" id="f_keyword" placeholder="关键字（买方/销售方/发票号/城市）">
+      <select id="f_account" class="grow"><option value="">全部邮箱</option></select>
+      <select id="f_city" class="grow"><option value="">全部城市</option></select>
+      <select id="f_buyer" class="grow"><option value="">全部买方</option></select>
+      <select id="f_seller" class="grow"><option value="">全部销售方</option></select>
+      <select id="f_company" class="grow"><option value="">全部所属公司</option></select>
+      <select id="f_attr" class="grow"><option value="">全部归属状态</option><option value="classified">已归类</option><option value="unclassified">未归类</option><option value="ambiguous">歧义</option></select>
+      <input type="date" id="f_from" title="开始日期">
+      <input type="date" id="f_to" title="结束日期">
+      <button onclick="resetPageAndLoad()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        查询
+      </button>
+      <button class="ghost" onclick="resetFilters()">重置</button>
+    </div>
+  </div>
+
+  <div class="panel list-panel">
+    <h2 class="list-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+      发票记录
+    </h2>
+    <div class="toolbar">
+      <button class="ghost" onclick="document.getElementById('fileIn').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        上传本地PDF
+      </button>
+      <input type="file" id="fileIn" accept="application/pdf" multiple style="display:none" onchange="uploadFiles(this)">
+      <button onclick="exportSelected()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        导出选中
+      </button>
+      <button class="danger ghost" onclick="deleteSelected()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+        删除选中
+      </button>
+      <button class="ghost" onclick="openAssignModal()" title="把勾选的发票批量改到某个所属公司">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        改所属公司
+      </button>
+      <button class="ghost" onclick="reparseAll()" title="用最新解析规则重新扫描所有PDF，补全缺失字段">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        重新解析
+      </button>
+      <button class="ghost" onclick="reconcile()" title="把磁盘上已下载但未进发票表的PDF回填进库（可先预览）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.3 2.6L3 8"/><path d="M3 3v5h5"/></svg>
+        对账修复
+      </button>
+      <button class="ghost" onclick="reconcile(true)" title="仅预览会回填哪些PDF，不写库">
+        对账预览
+      </button>
+      <span class="pill">已选 <b id="selCnt">0</b> 张</span>
+      <span id="expMsg" class="pill"></span>
+      <span class="pill" style="margin-left:auto">共 <b id="totalCnt">0</b> 张匹配</span>
+    </div>
+    <!-- 后台任务进度条 -->
+    <div id="jobBar" style="display:none;height:4px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin:4px 0">
+      <div id="jobBarFill" style="height:100%;width:0;background:#3b82f6;transition:width .2s"></div>
+    </div>
+    <div class="table-wrap">
+      <table id="tbl">
+        <thead><tr>
+          <th class="checkbox-cell no-sort"><input type="checkbox" class="chk" id="selAll" onchange="toggleAll(this)" aria-label="全选当前页"></th>
+          <th data-k="idx" class="no-sort">#</th>
+          <th data-k="account_name">邮箱</th>
+          <th data-k="buyer">买方主体</th>
+          <th data-k="company_name">所属公司</th>
+          <th class="no-sort">归属</th>
+          <th data-k="invoice_no">发票号码</th>
+          <th data-k="amount">金额</th>
+          <th data-k="invoice_date">开票日期</th>
+          <th data-k="seller">销售方</th>
+          <th data-k="city">城市</th>
+          <th class="no-sort">PDF</th>
+          <th class="no-sort">操作</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" style="display:none">没有匹配的发票记录。可「上传本地PDF」，或从「邮箱账号」添加邮箱抓取。</div>
+
+    <!-- 分页器 -->
+    <div class="pager" id="pager">
+      <div class="left">
+        <span>每页
+          <select id="pageSizeSel" onchange="onPageSizeChange()">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          条
+        </span>
+        <span id="pageInfo"></span>
+      </div>
+      <div class="pages" id="pages"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 导出选项弹窗 ========== -->
+<div class="mask" id="exportMask">
+  <div class="modal">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      导出选项
+    </h3>
+    <label>PDF 文件夹组织方式</label>
+    <select id="exportGroupBy" class="grow" style="width:100%">
+      <option value="none">不分组（全部平铺到 pdfs/ 下）</option>
+      <option value="buyer">按购买方分文件夹</option>
+      <option value="seller">按销售方分文件夹</option>
+      <option value="seller_buyer">先销售方后买方（销售方/买方/）</option>
+      <option value="buyer_seller">先买方后销售方（买方/销售方/）</option>
+    </select>
+    <p style="color:var(--muted);font-size:12px;margin-top:8px;line-height:1.6">
+      勾选的发票 PDF 会按所选方式归入对应子文件夹；清单（csv/md/xlsx）始终放在 zip 根目录。缺失买方或销售方的发票归入「(未知)」文件夹。
+    </p>
+    <div class="acts">
+      <button class="ghost" onclick="closeExportModal()">取消</button>
+      <button onclick="confirmExport()">开始导出</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 批量改所属公司弹窗 ========== -->
+<div class="mask" id="assignMask">
+  <div class="modal">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      批量改所属公司
+    </h3>
+    <p style="font-size:13px;color:var(--ink);margin:0 0 12px">将已勾选的 <b id="assignCnt">0</b> 张发票归属到：</p>
+    <select id="assign_company" class="grow" style="width:100%"></select>
+    <div class="msg" id="assignMsg"></div>
+    <div class="acts">
+      <button class="ghost" onclick="closeAssignModal()">取消</button>
+      <button onclick="confirmAssign()">确认归属</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+/* ======================================================== 发票台账（独立页） */
+let _companies = [];           // 公司缓存，供筛选下拉 + 批量改所属公司弹窗复用
+let currentPage = 1;
+let currentPageSize = 50;
+let totalRows = 0;
+let sortK=null, sortAsc=true;
+const selectedIds = new Set();   // 跨页勾选：保存所有已选 id
+let _loadSeq = 0;                // 请求序号，防止异步竞争
+let _cachedRows = [];            // 缓存上一次成功加载的行
+let _cachedTotal = 0;
+let _cachedStats = null;
+let _statsSeq = 0;
+
+function currentFilters(){
+  return {
+    keyword: document.getElementById('f_keyword').value.trim(),
+    account_id: document.getElementById('f_account').value,
+    city: document.getElementById('f_city').value,
+    buyer: document.getElementById('f_buyer').value,
+    seller: document.getElementById('f_seller').value,
+    company_id: document.getElementById('f_company').value,
+    attribution_status: document.getElementById('f_attr').value,
+    date_from: document.getElementById('f_from').value,
+    date_to: document.getElementById('f_to').value,
+  };
+}
+function resetFilters(){
+  ['f_keyword','f_account','f_city','f_buyer','f_seller','f_company','f_attr','f_from','f_to'].forEach(id=>document.getElementById(id).value='');
+  _cachedRows = []; _cachedTotal = 0; _cachedStats = null;
+  resetPageAndLoad();
+}
+function resetPageAndLoad(){ currentPage=1; load(); }
+
+async function load(){
+  const seq = ++_loadSeq;
+  document.querySelectorAll('#tbl th').forEach(x=>{
+    if(x.dataset.k) x.textContent = x.textContent.replace(/[▲▼]$/,'');
+  });
+  const f = stripEmpty(currentFilters());
+  const params = new URLSearchParams(f);
+  params.set('page', currentPage);
+  params.set('page_size', currentPageSize);
+
+  const tb = document.getElementById('tbody');
+  if(_cachedRows.length === 0){
+    tb.innerHTML = '<tr><td colspan="13" class="empty">加载中…</td></tr>';
+    document.getElementById('empty').style.display = 'none';
+  }
+
+  let data;
+  try{
+    data = await API('/api/invoices?' + params.toString());
+  }catch(e){
+    if(seq === _loadSeq){
+      if(_cachedRows.length > 0){ renderRows(_cachedRows, _cachedTotal, seq, f); }
+      else { tb.innerHTML = '<tr><td colspan="13" class="empty" style="color:var(--bad)">加载失败，点击 <a href="javascript:load()">重试</a></td></tr>'; }
+    }
+    return;
+  }
+  if(seq !== _loadSeq) return;
+
+  const rows = data.rows || [];
+  const total = data.total || 0;
+  if(total === 0 && _cachedRows.length > 0){ renderRows(_cachedRows, _cachedTotal, seq, f); }
+  else { _cachedRows = rows; _cachedTotal = total; renderRows(rows, total, seq, f); }
+}
+
+function renderRows(rows, total, seq, filters){
+  const tb = document.getElementById('tbody');
+  document.getElementById('empty').style.display = rows.length ? 'none':'block';
+  totalRows = total;
+  document.getElementById('totalCnt').textContent = total;
+  document.getElementById('cnt') && (document.getElementById('cnt').textContent = total);
+
+  if(sortK){
+    rows.sort((a,b)=>{
+      let x=a[sortK], y=b[sortK];
+      if(sortK==='amount'){x=parseFloat(x)||0;y=parseFloat(y)||0;}
+      if(x<y)return sortAsc?-1:1; if(x>y)return sortAsc?1:-1; return 0;
+    });
+  }
+  const startIdx = (currentPage-1)*currentPageSize;
+  tb.innerHTML = rows.map((r,i)=>{
+    const checked = selectedIds.has(r.id) ? 'checked' : '';
+    return `
+    <tr>
+      <td class="checkbox-cell"><input type="checkbox" class="chk rowchk" data-id="${r.id}" ${checked} onchange="onRowCheck(this, ${r.id})"></td>
+      <td>${startIdx+i+1}</td>
+      <td>${r.account_name||r.account_email||''}</td>
+      <td>${r.buyer||'<span style="color:#bbb">—</span>'}</td>
+      <td>${r.company_name||'<span style="color:#bbb">—</span>'}</td>
+      <td>${attrBadge(r)}</td>
+      <td>${r.invoice_no||'—'}</td>
+      <td class="num">${fmtMoney(r.amount)}</td>
+      <td>${r.invoice_date||'—'}</td>
+      <td>${r.seller||'—'}</td>
+      <td>${r.city?`<span class="tag">${r.city}</span>`:'—'}</td>
+      <td>${pdfCell(r)}</td>
+      <td><button class="mini danger ghost" onclick="deleteOne(${r.id})" title="删除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        删除
+      </button></td>
+    </tr>`;
+  }).join('');
+  if(sortK){
+    const th = document.querySelector(`#tbl th[data-k="${sortK}"]`);
+    if(th) th.textContent += sortAsc?'▲':'▼';
+  }
+  renderPager();
+  syncSel();
+  loadStats(filters);
+  notifyHeight();
+}
+
+document.querySelectorAll('#tbl th[data-k]').forEach(th=>{
+  th.onclick=()=>{
+    const k=th.dataset.k;
+    document.querySelectorAll('#tbl th').forEach(x=>{ if(x.dataset.k) x.textContent=x.textContent.replace(/[▲▼]$/,''); });
+    if(sortK===k) sortAsc=!sortAsc; else {sortK=k;sortAsc=true;}
+    th.textContent += sortAsc?'▲':'▼';
+    load();
+  };
+});
+
+function renderPager(){
+  const tp = totalPages();
+  const pi = document.getElementById('pageInfo');
+  const pages = document.getElementById('pages');
+  if(totalRows === 0){ pi.textContent=''; pages.innerHTML=''; return; }
+  const from = (currentPage-1)*currentPageSize + 1;
+  const to = Math.min(currentPage*currentPageSize, totalRows);
+  pi.textContent = `第 ${from}-${to} 条 / 共 ${totalRows} 条`;
+  let html = '';
+  html += `<button ${currentPage<=1?'disabled':''} onclick="gotoPage(${currentPage-1})">‹</button>`;
+  const pns = pageNumbers(currentPage, tp);
+  for(const p of pns){
+    if(p==='...') html += `<span style="padding:0 4px;color:var(--muted)">…</span>`;
+    else html += `<button class="${p===currentPage?'active':''}" onclick="gotoPage(${p})">${p}</button>`;
+  }
+  html += `<button ${currentPage>=tp?'disabled':''} onclick="gotoPage(${currentPage+1})">›</button>`;
+  pages.innerHTML = html;
+}
+function pageNumbers(cur, total){
+  const set = new Set([1, total, cur, cur-1, cur+1, cur-2, cur+2]);
+  const arr = [...set].filter(x=>x>=1 && x<=total).sort((a,b)=>a-b);
+  const out = [];
+  for(let i=0;i<arr.length;i++){ if(i>0 && arr[i]-arr[i-1]>1) out.push('...'); out.push(arr[i]); }
+  return out;
+}
+function gotoPage(p){ if(p<1 || p>totalPages()) return; currentPage = p; load(); }
+
+function onRowCheck(box, id){
+  if(box.checked) selectedIds.add(id); else selectedIds.delete(id);
+  syncSel();
+}
+function syncSel(){
+  document.getElementById('selCnt').textContent = selectedIds.size;
+  const rowChks = document.querySelectorAll('.rowchk');
+  const allBox = document.getElementById('selAll');
+  if(rowChks.length === 0){ allBox.checked = false; return; }
+  allBox.checked = Array.from(rowChks).every(c=>c.checked);
+}
+function toggleAll(box){
+  document.querySelectorAll('.rowchk').forEach(c=>{
+    c.checked = box.checked;
+    const id = parseInt(c.dataset.id);
+    if(box.checked) selectedIds.add(id); else selectedIds.delete(id);
+  });
+  syncSel();
+}
+
+function totalPages(){ return Math.max(1, Math.ceil(totalRows / currentPageSize)); }
+function onPageSizeChange(){
+  currentPageSize = parseInt(document.getElementById('pageSizeSel').value)||50;
+  currentPage = 1; load();
+}
+
+async function loadStats(filters){
+  const seq = ++_statsSeq;
+  const f = filters !== undefined ? stripEmpty(filters) : stripEmpty(currentFilters());
+  let s;
+  try{ s = await API('/api/stats?' + new URLSearchParams(f)); }
+  catch(e){ if(seq === _statsSeq && _cachedStats){ renderStats(_cachedStats); } return; }
+  if(seq !== _statsSeq) return;
+  if(s.count === 0 && _cachedStats && _cachedStats.count > 0){ renderStats(_cachedStats); return; }
+  _cachedStats = s; renderStats(s);
+}
+function renderStats(s){
+  let html = `
+    <div class="card"><div class="k">发票张数</div><div class="v">${s.count}</div></div>
+    <div class="card"><div class="k">合计金额</div><div class="v">${fmtMoney(s.total)}</div></div>`;
+  const top = Object.entries(s.by_buyer||{}).slice(0,3);
+  if(top.length){
+    html += `<div class="card top"><div class="k">买方 TOP 3</div><div class="v">${top.map(([k,v])=>`${escapeHtml(k)} <small>${fmtMoney(v)}</small>`).join('<br>')}</div></div>`;
+  }
+  document.getElementById('stats').innerHTML = html;
+}
+
+async function loadSelectors(){
+  const [accs, cities, buyers, sellers, comps] = await Promise.all([
+    API('/api/accounts'), API('/api/cities'), API('/api/buyers'), API('/api/sellers'), API('/api/companies')]);
+  const prevAccount = document.getElementById('f_account').value;
+  const prevCity = document.getElementById('f_city').value;
+  const prevBuyer = document.getElementById('f_buyer').value;
+  const prevSeller = document.getElementById('f_seller').value;
+  const prevCompany = document.getElementById('f_company').value;
+  document.getElementById('f_account').innerHTML =
+    '<option value="">全部邮箱</option>' + accs.map(a=>`<option value="${a.id}">${escapeHtml(a.name)} (${escapeHtml(a.email)})</option>`).join('');
+  document.getElementById('f_city').innerHTML =
+    '<option value="">全部城市</option>' + cities.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  document.getElementById('f_buyer').innerHTML =
+    '<option value="">全部买方</option>' + buyers.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+  document.getElementById('f_seller').innerHTML =
+    '<option value="">全部销售方</option>' + sellers.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  document.getElementById('f_company').innerHTML =
+    '<option value="">全部所属公司</option>' + comps.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  if(prevAccount && accs.some(a=>String(a.id)===prevAccount)) document.getElementById('f_account').value = prevAccount;
+  if(prevCity && cities.includes(prevCity)) document.getElementById('f_city').value = prevCity;
+  if(prevBuyer && buyers.includes(prevBuyer)) document.getElementById('f_buyer').value = prevBuyer;
+  if(prevSeller && sellers.includes(prevSeller)) document.getElementById('f_seller').value = prevSeller;
+  if(prevCompany && comps.some(c=>String(c.id)===prevCompany)) document.getElementById('f_company').value = prevCompany;
+  _companies = comps;
+  // 来自公司页带参跳转：填充下拉后再设初值，确保 option 已存在
+  if(window.__initCompanyId){
+    const id = String(window.__initCompanyId);
+    if(comps.some(c=>String(c.id)===id)) document.getElementById('f_company').value = id;
+  }
+}
+
+async function uploadFiles(input){
+  const files = Array.from(input.files||[]);
+  if(!files.length) return;
+  const payload = { files: [] };
+  for(const f of files){
+    const buf = new Uint8Array(await f.arrayBuffer());
+    let bin = ''; const CH = 0x8000;
+    for(let p=0; p<buf.length; p+=CH){ bin += String.fromCharCode.apply(null, buf.subarray(p, p+CH)); }
+    payload.files.push({ name: f.name, b64: btoa(bin) });
+  }
+  input.value='';
+  showJobBar();
+  const r = await API('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('导入失败'); return; }
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('导入失败：'+j.error) : (j.msg||'导入中…')); },
+    j => { hideJobBar(); setExp(j.error ? ('导入失败：'+j.error) : '导入完成'); loadSelectors(); load(); });
+}
+
+let _pendingExportIds = [];
+function exportSelected(){
+  const ids = Array.from(selectedIds);
+  if(!ids.length){ alert('请先勾选要导出的发票（可跨页勾选）'); return; }
+  _pendingExportIds = ids;
+  document.getElementById('exportMask').classList.add('show');
+}
+function closeExportModal(){ document.getElementById('exportMask').classList.remove('show'); _pendingExportIds = []; }
+async function confirmExport(){
+  const ids = _pendingExportIds;
+  if(!ids.length){ closeExportModal(); return; }
+  const group_by = document.getElementById('exportGroupBy').value || 'none';
+  closeExportModal();
+  showJobBar();
+  const r = await API('/api/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, group_by})});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('导出失败'); return; }
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('导出失败：'+j.error) : (j.msg||'打包中…')); },
+    j => {
+      hideJobBar();
+      if(j.error){ setExp('导出失败：'+j.error); return; }
+      setExp(`已导出 ${ids.length} 张`);
+      const a = document.createElement('a');
+      a.href = '/api/jobs/'+r.job_id+'/download'; a.download = j.result_name || '发票打包.zip'; a.click();
+    });
+}
+
+async function deleteOne(id){
+  if(!confirm('确认删除这张发票？PDF 文件会保留在本地。')) return;
+  const r = await API(`/api/invoices/${id}/delete`, {method:'POST'});
+  if(r.ok){ selectedIds.delete(id); load(); loadStats(); }
+  else { alert('删除失败'); }
+}
+async function deleteSelected(){
+  const ids = Array.from(selectedIds);
+  if(!ids.length){ alert('请先勾选要删除的发票（可跨页勾选）'); return; }
+  if(!confirm(`确认删除选中的 ${ids.length} 张发票？PDF 文件会保留在本地。`)) return;
+  showJobBar();
+  const r = await API('/api/invoices/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  if(!(r.ok && r.job_id)){ hideJobBar(); setExp('删除失败'); return; }
+  await pollJob(r.job_id,
+    j => { updateJobBar(j); setExp(j.error ? ('删除失败：'+j.error) : (j.running ? `正在删除… ${j.done||0}/${j.total||0}` : (j.msg||'已删除'))); },
+    j => {
+      hideJobBar(); setExp(j.error ? ('删除失败：'+j.error) : (j.msg||'已删除'));
+      for(const id of ids) selectedIds.delete(id); load(); loadStats();
+    });
+}
+async function reparseAll(){
+  if(!confirm('用最新的解析规则重新扫描所有已入库发票的 PDF？\n（用于补全之前没识别出来的字段，比如买方、销售方。）')) return;
+  const r = await API('/api/invoices/reparse', {method:'POST'});
+  if(r.ok){ alert('已启动重新解析，完成后刷新。'); }
+  else { alert(r.msg || '启动失败'); }
+}
+async function reconcile(dry){
+  const tip = dry ? '仅预览：列出会回填进库的 PDF，不写库、不动文件？' : '把磁盘上已下载但未进发票表的 PDF 回填进库？';
+  if(!confirm(tip)) return;
+  const r = await API('/api/reconcile', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dry_run: !!dry})});
+  if(r.ok){ alert('已启动对账，完成后刷新。'); }
+  else { alert(r.msg || '启动失败'); }
+}
+
+document.getElementById('f_keyword').addEventListener('keydown', e=>{ if(e.key==='Enter') resetPageAndLoad(); });
+
+/* ---- 批量改所属公司 ---- */
+function openAssignModal(){
+  const ids = Array.from(selectedIds);
+  if(!ids.length){ alert('请先勾选要改归属的发票（可跨页勾选）'); return; }
+  const fill = (comps)=>{
+    document.getElementById('assign_company').innerHTML =
+      '<option value="">（置为未归类）</option>' + comps.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  };
+  if(_companies.length){ fill(_companies); }
+  else { API('/api/companies').then(comps=>{ _companies = comps; fill(comps); }); }
+  document.getElementById('assignCnt').textContent = ids.length;
+  document.getElementById('assignMsg').textContent = '';
+  document.getElementById('assignMask').classList.add('show');
+}
+function closeAssignModal(){ document.getElementById('assignMask').classList.remove('show'); }
+async function confirmAssign(){
+  const ids = Array.from(selectedIds);
+  const cid = document.getElementById('assign_company').value || null;
+  const r = await API('/api/invoices/assign', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({invoice_ids: ids, company_id: cid?parseInt(cid):null})});
+  if(r.ok){
+    closeAssignModal(); load(); loadStats();
+    alert(`已将 ${r.updated||0} 张发票更新归属`);
+  } else {
+    document.getElementById('assignMsg').textContent = r.msg || '操作失败';
+  }
+}
+
+/* ---- 面包屑：来自公司页带参跳转时显示上下文 ---- */
+function initCrumb(){
+  const params = new URLSearchParams(location.search);
+  const cid = params.get('company_id');
+  const crumb = document.getElementById('crumb');
+  if(cid){
+    window.__initCompanyId = cid;
+    crumb.innerHTML = '<a href="companies.html">公司管理</a><span class="sep">›</span><span class="cur">发票</span>';
+    API('/api/companies/'+cid).then(c=>{
+      const name = c && c.name ? c.name : ('公司 #'+cid);
+      crumb.innerHTML = `<a href="companies.html">公司管理</a><span class="sep">›</span>`+
+        `<span class="tag-co">${escapeHtml(name)}</span><span class="sep">›</span><span class="cur">发票</span>`;
+    }).catch(()=>{});
+  } else {
+    crumb.innerHTML = '<span class="cur">全部发票</span>';
+  }
+}
+
+/* ---- 高度同步：iframe 向父页面回传内容高度，父页面动态调整高度，避免双滚动条 ---- */
+let _lastHeight = 0;
+function notifyHeight(){
+  if(new URLSearchParams(location.search).get('embedded') !== '1') return;
+  const h = document.body.scrollHeight;
+  if(h === _lastHeight) return;
+  _lastHeight = h;
+  window.parent.postMessage({type:'invoice-frame-height', height:h}, '*');
+}
+
+/* ---- 启动 ---- */
+// embedded 模式：被嵌入到公司管理页的 iframe 时，隐藏顶栏/面包屑/筛选面板/工具栏，
+// 只保留统计卡+表格+分页，避免重复操作入口和双重滚动。
+(function applyEmbeddedMode(){
+  if(new URLSearchParams(location.search).get('embedded') !== '1') return;
+  document.body.classList.add('embedded');
+  const top = document.querySelector('.topbar');
+  if(top) top.style.display = 'none';
+  const crumb = document.getElementById('crumb');
+  if(crumb) crumb.style.display = 'none';
+  const filterPanel = document.querySelector('.filter-panel');
+  if(filterPanel) filterPanel.style.display = 'none';
+  const toolbar = document.querySelector('.list-panel .toolbar');
+  if(toolbar) toolbar.style.display = 'none';
+  const listTitle = document.querySelector('.list-title');
+  if(listTitle) listTitle.style.display = 'none';
+})();
+
+renderNav('invoices');
+initCrumb();
+// 必须等 loadSelectors 完成（f_company 下拉已填、__initCompanyId 已应用）再 load()，
+// 否则 ?company_id=X 过滤不生效——下拉还是空的，查询会返回全部发票。
+(async () => {
+  await loadSelectors();
+  load();
+  // embedded 模式下表格渲染/分页切换后通知父页面更新高度
+  if(new URLSearchParams(location.search).get('embedded') === '1'){
+    notifyHeight();
+    window.addEventListener('load', notifyHeight);
+    // 异步兜底：图片/字体渲染后高度可能变化
+    setTimeout(notifyHeight, 200);
+    setTimeout(notifyHeight, 600);
+  }
+})();
+</script>
+</body>
+</html>

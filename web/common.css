@@ -1,0 +1,176 @@
+/* ======================================================== 票归集 · 公共样式（所有页面共享） */
+:root{
+  --bg:#f5f6fa; --panel:#fff; --ink:#1f2330; --muted:#6b7280;
+  --line:#e6e8ef; --accent:#534AB7; --accent-d:#3f379a; --accent-soft:#efeefb;
+  --ok:#1f9d55; --bad:#d23b3b; --warn:#c98a00;
+  --shadow:0 1px 3px rgba(20,20,40,.06), 0 1px 2px rgba(20,20,40,.04);
+  --shadow-lg:0 10px 30px rgba(20,20,40,.12);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;
+     background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+button,input,select{font:inherit}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---------- 顶栏（独立页 + index 共用） ---------- */
+header, .topbar{background:var(--accent);color:#fff;padding:0 22px;
+     display:flex;align-items:center;gap:24px;height:56px;
+     box-shadow:0 2px 8px rgba(83,74,183,.18)}
+header .brand, .topbar .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;white-space:nowrap}
+header .brand svg, .topbar .brand svg{width:22px;height:22px}
+nav.tabs{display:flex;gap:2px;height:100%;align-items:stretch}
+nav.tabs button{background:transparent;color:rgba(255,255,255,.75);border:none;
+                padding:0 18px;cursor:pointer;font-weight:500;font-size:14px;
+                border-bottom:3px solid transparent;transition:color .15s,border-color .15s;
+                display:flex;align-items:center;gap:7px;min-height:44px}
+nav.tabs button:hover{color:#fff;background:rgba(255,255,255,.06)}
+nav.tabs button.active{color:#fff;border-bottom-color:#fff}
+nav.tabs button svg{width:16px;height:16px}
+/* 独立页导航（链接式，支持跨页跳转） */
+.topnav{display:flex;gap:2px;height:100%;align-items:stretch}
+.topnav .nav-link{display:flex;align-items:center;gap:7px;min-height:44px;padding:0 16px;
+                  color:rgba(255,255,255,.75);text-decoration:none;font-weight:500;font-size:14px;
+                  border-bottom:3px solid transparent;transition:color .15s,border-color .15s}
+.topnav .nav-link:hover{color:#fff;background:rgba(255,255,255,.06)}
+.topnav .nav-link.active{color:#fff;border-bottom-color:#fff}
+header .who, .topbar .who{margin-left:auto;font-size:12px;opacity:.85}
+
+/* ---------- 子 Tab（index.html 内的 账号/抓取/匹配 切换，链接式导航之外） ---------- */
+.subtabs{display:flex;gap:6px;margin:0 0 16px;flex-wrap:wrap}
+.subtabs .tab-btn{background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:8px;
+                 padding:8px 16px;cursor:pointer;font-weight:600;font-size:14px;transition:background .15s,border-color .15s,color .15s;
+                 display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.subtabs .tab-btn:hover{background:var(--accent-soft)}
+.subtabs .tab-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* ---------- 布局 ---------- */
+.wrap{max-width:1280px;margin:18px auto;padding:0 18px}
+.tab-pane{display:none}
+.tab-pane.active{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---------- 卡片 ---------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+       padding:14px 16px;box-shadow:var(--shadow)}
+.card .k{color:var(--muted);font-size:12px;font-weight:500}
+.card .v{font-size:22px;font-weight:700;margin-top:4px;color:var(--ink)}
+.card .v small{font-size:12px;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.card.top .v{font-size:13px;font-weight:600;line-height:1.7}
+
+/* ---------- 面板 ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.panel h2{margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;
+          text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+.panel h2 svg{width:15px;height:15px;color:var(--accent)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+
+/* ---------- 表单元素 ---------- */
+input,select{padding:8px 11px;border:1px solid var(--line);border-radius:7px;
+             background:#fff;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+button{padding:8px 14px;border:1px solid var(--accent);border-radius:7px;
+       background:var(--accent);color:#fff;cursor:pointer;font-weight:600;
+       transition:background .15s,border-color .15s,opacity .15s;
+       display:inline-flex;align-items:center;gap:6px;min-height:36px}
+button:hover{background:var(--accent-d);border-color:var(--accent-d)}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+button.ghost:hover{background:var(--accent-soft)}
+button.danger{background:#fff;color:var(--bad);border:1px solid var(--bad)}
+button.danger:hover{background:#fdeaea}
+button.mini{padding:5px 10px;font-size:12px;min-height:28px}
+button.icon-only{padding:6px;min-width:32px;justify-content:center}
+button svg{width:14px;height:14px}
+.grow{flex:1;min-width:120px}
+
+/* ---------- 表格 ---------- */
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px;max-height:calc(100vh - 360px);min-height:320px}
+/* embedded 模式（公司页内嵌发票台账）：表格自然撑开，不要内部滚动条，高度由 iframe 自适应 */
+body.embedded .table-wrap{max-height:none;overflow:visible;min-height:0}
+body.embedded .wrap{padding-bottom:8px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}
+th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;white-space:nowrap}
+th{background:var(--accent-soft);color:#3a3470;position:sticky;top:0;z-index:1;
+   cursor:pointer;user-select:none;font-weight:600}
+th:hover{background:#e6e4f7}
+th.no-sort{cursor:default}
+th.no-sort:hover{background:var(--accent-soft)}
+tbody tr:hover{background:#faf9ff}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;background:var(--accent-soft);color:#3a3470;
+     border-radius:20px;padding:2px 9px;font-size:12px}
+.badge{display:inline-block;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600}
+.badge.on{background:#e6f6ec;color:var(--ok)}
+.badge.off{background:#fdeaea;color:var(--bad)}
+.badge.local{background:#eaf1fb;color:var(--accent)}
+.empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:13px}
+
+/* ---------- 分页器 ---------- */
+.pager{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px;justify-content:space-between}
+.pager .left{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.pager .pages{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.pager .pages button{min-width:32px;padding:5px 8px;font-size:13px}
+.pager .pages button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pager .pages button:not(.active){background:#fff;color:var(--ink);border:1px solid var(--line)}
+.pager .pages button:not(.active):hover{background:var(--accent-soft);border-color:var(--accent)}
+.pager select{padding:4px 8px;font-size:12px}
+
+/* ---------- 账号列表 ---------- */
+.acc{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.acc:last-child{border-bottom:none}
+.acc .meta{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.acc .nm{font-weight:600;font-size:14px}
+.acc .em{color:var(--muted);font-size:12px}
+.acc .btns{display:flex;gap:6px;flex-wrap:wrap}
+.acc .stat{font-size:11px;color:var(--muted);white-space:nowrap}
+
+/* ---------- 工具栏 ---------- */
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.pill{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.pill b{color:var(--accent)}
+
+/* ---------- 进度日志 ---------- */
+#fetchLog{background:#1e1e2a;color:#d6d6e0;font-family:ui-monospace,Menlo,Consolas,monospace;
+          font-size:12px;padding:12px;border-radius:8px;max-height:380px;overflow:auto;
+          white-space:pre-wrap;line-height:1.55}
+
+/* ---------- 弹窗 ---------- */
+.mask{position:fixed;inset:0;background:rgba(20,20,40,.45);display:none;
+      align-items:center;justify-content:center;z-index:50;padding:20px}
+.mask.show{display:flex;animation:fade .15s ease}
+.modal{background:#fff;border-radius:12px;padding:20px 22px;width:min(580px,100%);
+       max-height:90vh;overflow:auto;box-shadow:var(--shadow-lg)}
+.modal h3{margin:0 0 14px;font-size:16px;display:flex;align-items:center;gap:8px}
+.modal h3 svg{width:18px;height:18px;color:var(--accent)}
+.modal label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px;font-weight:500}
+.modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.modal .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.modal .msg{font-size:12px;color:var(--muted);margin-top:10px;min-height:16px}
+@media(max-width:640px){.modal .grid2{grid-template-columns:1fr}}
+
+.chk{width:18px;height:18px;cursor:pointer;accent-color:var(--accent);vertical-align:middle}
+.checkbox-cell{width:36px;text-align:center}
+
+/* ---------- 面包屑（公司→发票 上下文） ---------- */
+.crumb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;
+       font-size:13px;color:var(--muted)}
+.crumb a{font-weight:500}
+.crumb .sep{opacity:.5}
+.crumb .cur{color:var(--ink);font-weight:600}
+.crumb .tag-co{background:var(--accent-soft);color:#3a3470;border-radius:20px;padding:3px 10px;font-weight:600}
+
+/* ---------- 响应式 ---------- */
+@media(max-width:768px){
+  header, .topbar{padding:0 12px;gap:8px;flex-wrap:wrap;height:auto;min-height:56px}
+  header .brand, .topbar .brand{font-size:14px}
+  nav.tabs button{padding:0 10px;font-size:13px}
+  nav.tabs button span.lbl{display:none}
+  .topnav .nav-link{padding:0 10px;font-size:13px}
+  .wrap{padding:0 10px}
+  .table-wrap{max-height:calc(100vh - 420px)}
+  th,td{padding:7px 8px;font-size:12px}
+}

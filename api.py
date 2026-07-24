@@ -107,6 +107,55 @@ def reparse_all() -> Dict[str, Any]:
     return {"total": int(total), "updated": int(updated)}
 
 
+# ----------------------------------------------------------- 公司维度（P0 公司归属）
+def list_companies() -> List[Dict[str, Any]]:
+    """列出全部公司（含别名、税号）。"""
+    return db.get_companies()
+
+
+def get_company(company_id: int) -> Optional[Dict[str, Any]]:
+    c = db.get_company(company_id)
+    return dict(c) if c else None
+
+
+def create_company(fields: Dict[str, Any]) -> Dict[str, Any]:
+    """新建公司（含别名/税号）。返回新建的公司记录。"""
+    return db.upsert_company(fields)
+
+
+def update_company(company_id: int, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """按 id 更新公司。"""
+    return db.update_company(company_id, fields)
+
+
+def delete_company(company_id: int) -> Dict[str, Any]:
+    """删除公司（其名下发票回退为未归类）。"""
+    db.delete_company(company_id)
+    return {"ok": True, "id": company_id}
+
+
+def import_companies_from_invoices() -> Dict[str, Any]:
+    """从已归集发票的 buyer 去重，批量生成候选公司。返回 {"ok", "added", "skipped", "errors"}。"""
+    res = db.import_companies_from_invoices()
+    return {"ok": True, **res}
+
+
+def assign_invoices(invoice_ids: List[int], company_id: Optional[int]) -> Dict[str, Any]:
+    """批量人工归属（单张/批量）。company_id 为 None 表示置为未归类。"""
+    n = db.assign_invoices(invoice_ids, company_id)
+    return {"ok": True, "updated": int(n)}
+
+
+def backfill_company() -> Dict[str, Any]:
+    """历史发票一键回填公司归属。返回统计。"""
+    return db.backfill_company_attribution()
+
+
+def attribution_summary() -> Dict[str, Any]:
+    """归属概况统计（总数 / 各状态 / 各公司发票数）。"""
+    return db.attribution_summary()
+
+
 def _safe_account(a: Dict[str, Any]) -> Dict[str, Any]:
     """脱敏：不返回明文密码，只给 password_set 标记（前端据此提示'已保存'）。"""
     d = dict(a)

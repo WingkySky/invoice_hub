@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>票归集 · 公司管理</title>
+<link rel="stylesheet" href="common.css">
+<style>
+/* 就地展开的发票抽屉：紧贴公司卡片下方，iframe 复用 invoices.html 全部能力 */
+.invoice-drawer{
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.invoice-drawer .invoice-frame{
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  border: 0;
+  transition: height .15s ease;
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6M9 17h6"/></svg>
+    票归集
+  </div>
+  <nav class="topnav" id="topnav"></nav>
+  <div class="who">发票归集中枢</div>
+</header>
+
+<div class="wrap">
+  <div class="crumb"><span class="cur">公司管理</span></div>
+
+  <div class="cards" id="companyStats"></div>
+
+  <div class="panel">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      公司清单
+    </h2>
+    <div class="toolbar">
+      <button onclick="openCompanyAdd()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        添加公司
+      </button>
+      <button class="ghost" onclick="importCompanies()" title="把已归集发票的购买方去重，批量生成为候选公司">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        从发票导入候选公司
+      </button>
+      <button class="ghost" onclick="backfillCompanies()" title="对历史未归类/歧义发票重跑归属逻辑">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        一键回填归属
+      </button>
+      <span class="pill" style="margin-left:auto">共 <b id="companyCnt">0</b> 个公司</span>
+    </div>
+    <div id="company_list"></div>
+  </div>
+</div>
+
+<!-- ========== 公司编辑/添加弹窗 ========== -->
+<div class="mask" id="companyMask">
+  <div class="modal">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <span id="companyModalTitle">添加公司</span>
+    </h3>
+    <input type="hidden" id="c_id">
+    <div class="grid2">
+      <div><label for="c_name">公司名称</label><input class="grow" id="c_name" placeholder="如 某某科技有限公司"></div>
+      <div><label for="c_tax">统一社会信用代码</label><input class="grow" id="c_tax" placeholder="18 位，可留空（系统自动回填）"></div>
+    </div>
+    <div><label for="c_aliases">识别别名（逗号分隔，用于匹配购买方）</label>
+      <input class="grow" id="c_aliases" placeholder="如 公司简称A,曾用名B"></div>
+    <p style="color:var(--muted);font-size:12px;margin:10px 0 0;line-height:1.6">
+      购买方（发票上的买方）只要与「公司名称」或任一「别名」双向包含匹配，就会自动归入该公司。
+      系统还会从发票里自动抽取统一社会信用代码回填到此处。
+    </p>
+    <div class="msg" id="companyMsg"></div>
+    <div class="acts">
+      <button class="ghost" onclick="closeCompanyModal()">取消</button>
+      <button onclick="saveCompany()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+/* ======================================================== 公司管理（独立页） */
+async function loadCompanies(){
+  try{
+    const comps = await API('/api/companies');
+    renderCompanies(comps);
+  }catch(e){
+    document.getElementById('company_list').innerHTML = '<div class="empty">加载失败：'+e+'</div>';
+  }
+  try{ renderCompanyStats(await API('/api/attribution/stats')); }
+  catch(e){ /* 概况统计非关键，失败不阻塞列表 */ }
+}
+
+function renderCompanyStats(s){
+  if(!s) return;
+  document.getElementById('companyStats').innerHTML = `
+    <div class="card"><div class="k">发票总数</div><div class="v">${s.total}</div></div>
+    <div class="card"><div class="k">已归类</div><div class="v" style="color:var(--ok)">${s.classified}</div></div>
+    <div class="card"><div class="k">未归类</div><div class="v" style="color:var(--bad)">${s.unclassified}</div></div>
+    <div class="card"><div class="k">歧义</div><div class="v" style="color:var(--warn)">${s.ambiguous}</div></div>
+  `;
+}
+
+function renderCompanies(comps){
+  document.getElementById('companyCnt').textContent = comps.length;
+  const el = document.getElementById('company_list');
+  if(!comps.length){
+    el.innerHTML = '<div class="empty">还没有公司。点「添加公司」手动建立，或「从发票导入候选公司」一键把已归集发票的购买方批量生成为候选公司。</div>';
+    return;
+  }
+  el.innerHTML = comps.map(c=>{
+    let aliases = c.aliases;
+    try { aliases = typeof aliases==='string' ? JSON.parse(aliases||'[]') : (aliases||[]); } catch(e){ aliases = []; }
+    const aliasTxt = Array.isArray(aliases) ? aliases.join('、') : '';
+    return `
+    <div class="acc">
+      <span class="badge local">公司</span>
+      <div class="meta">
+        <span class="nm">${escapeHtml(c.name)}</span>
+        <span class="em">${c.tax_id ? '税号 '+escapeHtml(c.tax_id) : '税号 未填（自动回填）'}${aliasTxt ? ' · 别名 '+escapeHtml(aliasTxt) : ''}</span>
+      </div>
+      <span class="btns">
+        <button class="mini ghost" onclick="openCompanyEdit(${c.id})">编辑</button>
+        <button class="mini" id="viewBtn-${c.id}" onclick="toggleInvoicesDrawer(${c.id})">查看发票</button>
+        <button class="mini danger" onclick="delCompany(${c.id})">删除</button>
+      </span>
+    </div>
+    <div class="invoice-drawer" id="drawer-${c.id}" style="display:none">
+      <iframe class="invoice-frame" frameborder="0" src="about:blank"></iframe>
+    </div>`;
+  }).join('');
+}
+
+function openCompanyAdd(){
+  document.getElementById('companyModalTitle').textContent = '添加公司';
+  document.getElementById('c_id').value = '';
+  document.getElementById('c_name').value = '';
+  document.getElementById('c_tax').value = '';
+  document.getElementById('c_aliases').value = '';
+  document.getElementById('companyMsg').textContent = '';
+  document.getElementById('companyMask').classList.add('show');
+}
+
+async function openCompanyEdit(id){
+  const c = await API(`/api/companies/${id}`);
+  if(!c || c.id===undefined){ alert('读取公司失败'); return; }
+  document.getElementById('companyModalTitle').textContent = '编辑公司';
+  document.getElementById('c_id').value = c.id;
+  document.getElementById('c_name').value = c.name || '';
+  document.getElementById('c_tax').value = c.tax_id || '';
+  let aliases = c.aliases;
+  try { aliases = typeof aliases==='string' ? JSON.parse(aliases||'[]') : (aliases||[]); } catch(e){ aliases = []; }
+  document.getElementById('c_aliases').value = Array.isArray(aliases) ? aliases.join(', ') : '';
+  document.getElementById('companyMsg').textContent = '';
+  document.getElementById('companyMask').classList.add('show');
+}
+
+function closeCompanyModal(){ document.getElementById('companyMask').classList.remove('show'); }
+
+async function saveCompany(){
+  const id = document.getElementById('c_id').value;
+  const name = document.getElementById('c_name').value.trim();
+  const tax_id = document.getElementById('c_tax').value.trim();
+  const aliases = document.getElementById('c_aliases').value.trim();
+  if(!name){ alert('公司名称必填'); return; }
+  const body = { name, tax_id, aliases };
+  const msg = document.getElementById('companyMsg');
+  msg.textContent = '保存中…';
+  try{
+    let r;
+    if(id){ r = await API(`/api/companies/${id}/update`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); }
+    else { r = await API('/api/companies', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); }
+    if(r.ok){ closeCompanyModal(); loadCompanies(); }
+    else { msg.textContent = r.msg || '保存失败'; }
+  }catch(e){ msg.textContent = '保存失败：'+e; }
+}
+
+async function delCompany(id){
+  if(!confirm('确认删除该公司？其名下发票会回退为「未归类」。')) return;
+  const r = await API(`/api/companies/${id}/delete`, {method:'POST'});
+  if(r.ok){ loadCompanies(); }
+  else { alert('删除失败'); }
+}
+
+async function importCompanies(){
+  if(!confirm('把已归集发票的购买方（买方）去重，批量生成为候选公司？\n已有的公司不会重复创建。')) return;
+  const r = await API('/api/companies/import-from-invoices', {method:'POST'});
+  if(r.ok){ alert(`已导入 ${r.added||0} 个候选公司`); loadCompanies(); }
+  else { alert('导入失败'); }
+}
+
+async function backfillCompanies(){
+  if(!confirm('对历史未归类 / 歧义的发票重跑归属逻辑？可重复执行。')) return;
+  const r = await API('/api/companies/backfill', {method:'POST'});
+  if(!(r.ok && r.job_id)){ alert('启动失败'); return; }
+  showJobBar();
+  await pollJob(r.job_id,
+    j => { updateJobBar({done:j.done||0, total:j.total||1}); setExp(j.error ? ('回填失败：'+j.error) : (j.msg||'回填中…')); },
+    j => { hideJobBar(); setExp(j.error ? ('回填失败：'+j.error) : (j.msg||'回填完成')); loadCompanies(); });
+}
+
+// 查看发票：就地展开 iframe（嵌入 invoices.html 的 embedded 模式），
+// 完全复用发票台账的筛选/分页/PDF 查看/导出逻辑，不离开公司管理页。
+// 首次展开才设 src，避免每次切换都重新加载；收起保留状态。
+function toggleInvoicesDrawer(id){
+  const drawer = document.getElementById('drawer-' + id);
+  const btn = document.getElementById('viewBtn-' + id);
+  const frame = drawer.querySelector('iframe');
+  if(drawer.style.display === 'none'){
+    if(!frame.dataset.loaded){
+      frame.src = 'invoices.html?company_id=' + id + '&embedded=1';
+      frame.dataset.loaded = '1';
+    }
+    drawer.style.display = 'block';
+    if(btn) btn.textContent = '收起发票';
+  } else {
+    drawer.style.display = 'none';
+    if(btn) btn.textContent = '查看发票';
+  }
+}
+
+/* ---- 监听子 iframe 回传高度，动态撑开 drawer，避免双重滚动条 ---- */
+window.addEventListener('message', function(e){
+  if(e.data && e.data.type === 'invoice-frame-height' && typeof e.data.height === 'number'){
+    const frames = document.querySelectorAll('.invoice-frame');
+    frames.forEach(f => {
+      if(f.contentWindow === e.source){
+        f.style.height = e.data.height + 'px';
+      }
+    });
+  }
+});
+
+/* ---- 启动 ---- */
+renderNav('companies');
+loadCompanies();
+</script>
+</body>
+</html>

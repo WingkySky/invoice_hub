@@ -792,6 +792,9 @@ def extract_fields_by_layout(pdf_path):
             result["buyer"] = buyer
         if seller:
             result["seller"] = seller
+        # 购买方统一社会信用代码：供"公司归属"回填公司 tax_id（R3/Q4）
+        if buyer_tax:
+            result["buyer_tax"] = buyer_tax
 
         # —— 发票号：找 15-20 位纯数字的块，在顶部区域 ——
         for b in top_blocks:
@@ -965,6 +968,7 @@ def parse_pdf_to_invoice(pdf_path, account_id, email_id=None, source_type="attac
         "pdf_path": rel,
         "source_type": source_type,
         "remark": info.get("remark", ""),
+        "buyer_tax": info.get("buyer_tax", ""),
         "note": "" if info.get("invoice_no") else "未识别到发票号",
     }
     # 文件名是发票格式（dzfp_…）时，用文件名里的发票号/销售方/日期兜底补全
@@ -1343,7 +1347,7 @@ def _invoice_update_payload(existing, inv):
         新候选格式更优或同级（PDF 优先于 OFD）→ 采纳其文件与格式。
       - 成功解析（note 为空）时清掉上一轮「来自文件名/标题」占位说明，避免误导。"""
     payload = {}
-    for k in ("buyer", "seller", "amount", "invoice_date", "city", "note", "remark"):
+    for k in ("buyer", "seller", "amount", "invoice_date", "city", "note", "remark", "buyer_tax"):
         v = inv.get(k)
         if v not in (None, ""):
             payload[k] = v
@@ -1542,6 +1546,8 @@ def process_pending(acc, rules, session, pending):
                     existing = db.get_invoice_by_no(acc["id"], inv_no)
                     if existing:
                         db.update_invoice_fields(existing["id"], _invoice_update_payload(existing, inv))
+                        # buyer 可能在本轮解析中被补全（此前为空）→ 重新计算归属
+                        db.reattribute_invoice(existing["id"])
                         inserted_any = True
                         continue
                 if db.insert_invoice(inv):
@@ -1571,6 +1577,8 @@ def process_pending(acc, rules, session, pending):
                 existing = db.get_invoice_by_no(acc["id"], inv_no)
                 if existing:
                     db.update_invoice_fields(existing["id"], _invoice_update_payload(existing, inv))
+                    # buyer 可能在本轮解析中被补全（此前为空）→ 重新计算归属
+                    db.reattribute_invoice(existing["id"])
                     inserted_any = True
                     continue
                 if db.insert_invoice(inv):
@@ -1715,15 +1723,19 @@ def reparse_all_pdfs():
         except Exception as e:
             log(f"  [{idx+1}/{total}] #{inv['id']} 解析失败: {e}")
             continue
-        # 比较需要更新的字段
+        # 比较需要更新的字段（含 buyer_tax：购买方统一社会信用代码，
+        # 历史发票入库时解析逻辑尚未提取该字段，重解析时需补写回库，进而触发
+        # _compute_attribution/_fill_company_tax_id 把 company.tax_id 自动回填）
         fields_to_update = {}
-        for key in ("buyer", "seller", "amount", "invoice_no", "invoice_date", "city", "note", "remark"):
+        for key in ("buyer", "seller", "amount", "invoice_no", "invoice_date", "city", "note", "remark", "buyer_tax"):
             old_val = inv.get(key) or ""
             new_val = new_inv.get(key) or ""
             if str(old_val) != str(new_val):
                 fields_to_update[key] = new_val
         if fields_to_update:
             db.update_invoice_fields(inv["id"], fields_to_update)
+            # 重解析可能补全 buyer / buyer_tax → 重算归属（含 tax_id 回填）
+            db.reattribute_invoice(inv["id"])
             updated += 1
             log(f"  [{idx+1}/{total}] #{inv['id']} 更新: {', '.join(fields_to_update.keys())}")
     log(f"[重新解析] 完成，更新了 {updated}/{total} 条")

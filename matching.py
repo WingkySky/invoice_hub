@@ -102,11 +102,8 @@ def _to_datetime(value):
 
 def _buyer_match(inv_buyer, row_buyer):
     """买方模糊匹配：模板常是简写（如'南沙友谊'），库内是全称（如'广州南沙友谊人才服务有限公司'）。
-    双向包含即视为匹配：任一方包含另一方。"""
-    if not inv_buyer or not row_buyer:
-        return False
-    a, b = str(inv_buyer).strip(), str(row_buyer).strip()
-    return a == b or a in b or b in a
+    双向包含即视为匹配：任一方包含另一方。逻辑统一复用 db.buyer_match（公司归属也用同一套），避免分叉。"""
+    return db.buyer_match(inv_buyer, row_buyer)
 
 
 def _to_amount(value):

@@ -77,6 +77,13 @@ def _parse_filters(qs):
             f["account_id"] = int(f["account_id"])
         except Exception:
             f.pop("account_id", None)
+    if qs.get("company_id"):
+        try:
+            f["company_id"] = int(qs["company_id"][0])
+        except Exception:
+            pass
+    if qs.get("attribution_status"):
+        f["attribution_status"] = qs["attribution_status"][0]
     return f
 
 
@@ -209,6 +216,15 @@ def _run_export(report, ids, group_by=None):
     report.result(path, "发票打包.zip")
 
 
+def _run_backfill(report):
+    """历史发票一键回填公司归属（后台任务）。"""
+    r = api.backfill_company()
+    scanned = r.get("scanned", 0) or 0
+    report(scanned, scanned,
+           f"回填完成：已归类 {r.get('classified', 0)}，未归类 {r.get('unclassified', 0)}，歧义 {r.get('ambiguous', 0)}")
+    report.msg = f"回填完成：已归类 {r.get('classified', 0)}，未归类 {r.get('unclassified', 0)}，歧义 {r.get('ambiguous', 0)}"
+
+
 def scheduler_loop():
     global LAST_AUTO
     while True:
@@ -266,6 +282,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(INDEX, "text/html; charset=utf-8")
             return
 
+        # 多页面静态资源（模块化拆分：发票/公司等独立页面 + 共享 css/js）
+        _WEB = os.path.dirname(os.path.abspath(__file__))
+        _STATIC_PAGES = {
+            "/invoices.html": ("text/html; charset=utf-8", "invoices.html"),
+            "/companies.html": ("text/html; charset=utf-8", "companies.html"),
+            "/common.css": ("text/css; charset=utf-8", "common.css"),
+            "/common.js": ("application/javascript; charset=utf-8", "common.js"),
+            "/index.js": ("application/javascript; charset=utf-8", "index.js"),
+        }
+        if path in _STATIC_PAGES:
+            _ctype, _fname = _STATIC_PAGES[path]
+            _fp = os.path.join(_WEB, _fname)
+            if os.path.isfile(_fp):
+                self._send_file(_fp, _ctype)
+            else:
+                self.send_error(404)
+            return
+
         if path == "/api/invoices":
             filters = _parse_filters(qs)
             try:
@@ -312,6 +346,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/sellers":
             _json(self, db.distinct_sellers())
+            return
+
+        # 公司清单（P0 公司归属）
+        if path == "/api/companies":
+            _json(self, api.list_companies())
+            return
+
+        if path == "/api/attribution/stats":
+            _json(self, api.attribution_summary())
+            return
+
+        m = re.match(r"^/api/companies/(\d+)$", path)
+        if m:
+            _json(self, api.get_company(int(m.group(1))) or {})
             return
 
         if path == "/api/stats":
@@ -428,6 +476,28 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
 
         path = u.path
+
+        # 顶层兜底：避免任意一条路由抛异常时把 TCP 连接直接关掉，
+        # 那样浏览器会看到 ERR_EMPTY_RESPONSE（没有任何可显示的诊断）。
+        try:
+            self._dispatch_post(path, payload)
+        except Exception as e:
+            import traceback as _tb
+            sys.stderr.write("[do_POST] %s %s -> %s\n%s\n" % (
+                path, payload, e, _tb.format_exc()))
+            try:
+                _json(self, {"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
+            except Exception:
+                # 兜底再失败：尽量发回 500 文本
+                try:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b'{"ok":false,"error":"internal_error"}')
+                except Exception:
+                    pass
+
+    def _dispatch_post(self, path, payload):
 
         # 新增账号
         if path == "/api/accounts":
@@ -714,6 +784,52 @@ class Handler(BaseHTTPRequestHandler):
             _json(self, {"ok": True, "job_id": jid})
             return
 
+        # ----------------------------------------------------- 公司维度（P0 公司归属）
+        def _company_id_from_path(path):
+            # /api/companies/<id>[/...]
+            parts = [p for p in path.split("/") if p]
+            try:
+                return int(parts[2])
+            except (IndexError, ValueError):
+                return None
+
+        if path == "/api/companies":
+            c = api.create_company(payload or {})
+            _json(self, {"ok": True, "company": c})
+            return
+
+        if path == "/api/companies/import-from-invoices":
+            r = api.import_companies_from_invoices()
+            _json(self, r)
+            return
+
+        if path == "/api/companies/backfill":
+            jid = start_job("backfill", _run_backfill, total=None)
+            _json(self, {"ok": True, "job_id": jid})
+            return
+
+        m = re.match(r"^/api/companies/(\d+)/update$", path)
+        if m:
+            c = api.update_company(int(m.group(1)), payload or {})
+            _json(self, {"ok": True, "company": c})
+            return
+
+        m = re.match(r"^/api/companies/(\d+)/delete$", path)
+        if m:
+            r = api.delete_company(int(m.group(1)))
+            _json(self, r)
+            return
+
+        if path == "/api/invoices/assign":
+            ids = payload.get("invoice_ids", [])
+            cid = payload.get("company_id")
+            try:
+                r = api.assign_invoices(ids, cid)
+                _json(self, r)
+            except ValueError as e:
+                _json(self, {"ok": False, "msg": str(e)}, status=400)
+            return
+
         self.send_error(404)
 
     # ----------------------------------------------------- 导出 zip
@@ -742,6 +858,7 @@ def _build_export_zip(ids, report, group_by=None):
       - 'seller'           : 按销售方分文件夹 pdfs/<销售方>/
       - 'seller_buyer'     : 先销售方再买方 pdfs/<销售方>/<买方>/
       - 'buyer_seller'     : 先买方再销售方 pdfs/<买方>/<销售方>/
+      - 'company'          : 按归属公司分文件夹 pdfs/<公司名>/（P0 公司归属后的打包铺垫）
     缺失字段统一回退为"(未知)"，避免空目录名。
     """
     rows = db.get_invoices_by_ids(ids)
@@ -772,6 +889,8 @@ def _build_export_zip(ids, report, group_by=None):
             return os.path.join(_safe_seg(seller), _safe_seg(buyer))
         if group_by == "buyer_seller":
             return os.path.join(_safe_seg(buyer), _safe_seg(seller))
+        if group_by == "company":
+            return _safe_seg(r.get("company_name") or "(未归类)")
         return ""
 
     for i, r in enumerate(rows, 1):
@@ -793,10 +912,10 @@ def _build_export_zip(ids, report, group_by=None):
             if report:
                 report(i, total, f"打包中 {i}/{total}")
     # 清单（csv / md / xlsx）
-    headers = ["序号", "邮箱", "买方主体", "发票号码", "金额", "开票日期", "销售方", "城市", "来源", "PDF文件"]
+    headers = ["序号", "邮箱", "所属公司", "买方主体", "发票号码", "金额", "开票日期", "销售方", "城市", "来源", "PDF文件"]
     def row_vals(i, r):
         return [i, r.get("account_name") or r.get("account_email") or "",
-                r.get("buyer", ""), r.get("invoice_no", ""),
+                r.get("company_name") or "", r.get("buyer", ""), r.get("invoice_no", ""),
                 r.get("amount", "") or "", r.get("invoice_date", ""),
                 r.get("seller", ""), r.get("city", ""),
                 r.get("source_type", ""), ""]

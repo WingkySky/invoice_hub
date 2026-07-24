@@ -17,6 +17,13 @@ agent / 程序化调用建议用 --json：每条命令输出一行 JSON，便于
   python hub.py seed <本地PDF文件夹> [--account 别名]  # 把已有PDF导入库（演示/补录）
   python hub.py report [--xlsx 路径] [--html 路径]     # 从库导出 Excel/HTML（离线用）
   python hub.py serve [--port 8000]                   # 起通用 Web 控制台
+  python hub.py companies list                        # 列出所属公司
+  python hub.py companies add --name "某某科技" [--tax-id 9111...] [--aliases "简称A,简称B"]
+  python hub.py companies update <id> --name "新名" [--tax-id ...] [--aliases ...]
+  python hub.py companies delete <id>                 # 删除公司（名下发票回退未归类）
+  python hub.py companies import                      # 从发票购买方批量导入候选公司
+  python hub.py companies backfill                    # 历史发票一键回填归属
+  python hub.py companies assign --ids 1,2,3 --company-id <id>   # 批量改所属公司
   （任意命令加 --json 即以 JSON 输出）
 """
 import argparse
@@ -117,6 +124,70 @@ def cmd_accounts(args):
         prefix = "✓ " if r["ok"] else "✗ "
         _result(r, [prefix + r["msg"]])
         return
+
+
+# ----------------------------------------------------------- companies（公司归属维度）
+def cmd_companies(args):
+    if args.sub == "list" or args.sub is None:
+        rows = api.list_companies()
+        human = []
+        if not rows:
+            human.append("（暂无公司）用 `hub.py companies add` 添加，或 `hub.py companies import` 从发票导入。")
+        else:
+            human.append(f"{'ID':<3} {'名称':<22} {'税号':<22} 别名")
+            for c in rows:
+                try:
+                    al = c.get("aliases") or "[]"
+                    al = json.loads(al) if isinstance(al, str) else (al or [])
+                except Exception:
+                    al = []
+                al_s = "、".join(al) if isinstance(al, list) else str(al)
+                human.append(f"{c['id']:<3} {str(c['name'])[:21]:<22} {str(c.get('tax_id') or '-')[:21]:<22} {al_s}")
+        _result({"ok": True, "companies": rows}, human)
+        return
+
+    if args.sub == "add":
+        if not args.name:
+            _result({"ok": False, "error": "name_required"}, ["[错误] --name 必填"])
+            sys.exit(1)
+        c = api.create_company({"name": args.name, "tax_id": args.tax_id or "", "aliases": args.aliases or ""})
+        _result({"ok": True, "company": c}, [f"[ok] 已添加公司 {c.get('name')} (id={c.get('id')})"])
+
+    if args.sub == "update":
+        fields = {}
+        if args.name is not None:
+            fields["name"] = args.name
+        if args.tax_id is not None:
+            fields["tax_id"] = args.tax_id
+        if args.aliases is not None:
+            fields["aliases"] = args.aliases
+        c = api.update_company(args.id, fields)
+        _result({"ok": True, "company": c}, [f"[ok] 已更新公司 #{args.id} -> {c.get('name')}"])
+
+    if args.sub == "delete":
+        r = api.delete_company(args.id)
+        _result(r, [f"[ok] 已删除公司 #{args.id}（其名下发票回退为未归类）"])
+
+    if args.sub == "import":
+        r = api.import_companies_from_invoices()
+        _result(r, [f"[ok] 已从发票导入 {r.get('added', 0)} 个候选公司"])
+
+    if args.sub == "backfill":
+        r = api.backfill_company()
+        human = [f"[ok] 回填完成：扫描 {r.get('scanned', 0)} 张",
+                 f"     已归类 {r.get('classified', 0)} / 未归类 {r.get('unclassified', 0)} / 歧义 {r.get('ambiguous', 0)}"]
+        _result(r, human)
+
+    if args.sub == "assign":
+        ids = [int(x) for x in (args.ids or "").split(",") if x.strip().isdigit()]
+        if not ids:
+            _result({"ok": False, "error": "ids_required"}, ["[错误] --ids 必填（逗号分隔的发票 id）"])
+            sys.exit(1)
+        cid = int(args.company_id) if args.company_id else None
+        r = api.assign_invoices(ids, cid)
+        human = [f"[ok] 已将 {r.get('updated', 0)} 张发票归属到"
+                 + (f" 公司 #{cid}" if cid else " 未归类")]
+        _result(r, human)
 
 
 # ----------------------------------------------------------- fetch
@@ -228,9 +299,9 @@ def cmd_serve(args):
     app.run(port=args.port or 8000)
 
 
-# ----------------------------------------------------------- main
-def main():
-    ap = argparse.ArgumentParser(prog="hub.py", description="多邮箱发票中枢（数据驱动）")
+# ----------------------------------------------------------- 参数解析
+def build_parser():
+    ap = argparse.ArgumentParser(prog="hub.py", description="票归集 · 发票归集中枢（数据驱动）")
     ap.add_argument("--json", action="store_true",
                     help="以 JSON 输出结果（每行一个 JSON 对象），便于 agent / 程序解析")
     sub = ap.add_subparsers(dest="cmd")
@@ -269,6 +340,32 @@ def main():
     p_serve = sub.add_parser("serve", help="起 Web 控制台")
     p_serve.add_argument("--port", type=int, default=8000)
 
+    p_comp = sub.add_parser("companies", help="管理所属公司（发票归集维度）")
+    p_comp_sub = p_comp.add_subparsers(dest="sub")
+    p_comp_sub.add_parser("list")
+    p_comp_add = p_comp_sub.add_parser("add")
+    p_comp_add.add_argument("--name", help="公司名称（必填）")
+    p_comp_add.add_argument("--tax-id", dest="tax_id", help="统一社会信用代码（18位，可留空自动回填）")
+    p_comp_add.add_argument("--aliases", help="识别别名，逗号分隔（用于匹配购买方）")
+    p_comp_upd = p_comp_sub.add_parser("update")
+    p_comp_upd.add_argument("id", type=int)
+    p_comp_upd.add_argument("--name")
+    p_comp_upd.add_argument("--tax-id", dest="tax_id")
+    p_comp_upd.add_argument("--aliases")
+    p_comp_del = p_comp_sub.add_parser("delete")
+    p_comp_del.add_argument("id", type=int)
+    p_comp_sub.add_parser("import").help = "从已归集发票的购买方批量导入候选公司"
+    p_comp_sub.add_parser("backfill").help = "对历史未归类/歧义发票重跑归属逻辑"
+    p_comp_assign = p_comp_sub.add_parser("assign")
+    p_comp_assign.add_argument("--ids", required=True, help="逗号分隔的发票 id")
+    p_comp_assign.add_argument("--company-id", dest="company_id", help="目标公司 id（省略=置为未归类）")
+
+    return ap
+
+
+# ----------------------------------------------------------- main
+def main():
+    ap = build_parser()
     args = ap.parse_args()
 
     # 全局开关：--json 时静默抓取日志，只输出最终 JSON
@@ -289,6 +386,8 @@ def main():
         cmd_report(args)
     elif args.cmd == "serve":
         cmd_serve(args)
+    elif args.cmd == "companies":
+        cmd_companies(args)
     else:
         ap.print_help()
 
